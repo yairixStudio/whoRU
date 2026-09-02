@@ -5,6 +5,7 @@ import WhoRUCore
 /// The status-item menu. Plain NSMenu look, nothing custom.
 struct MenuContent: View {
     let model: AppModel
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         if let last = model.lastSession {
@@ -28,8 +29,11 @@ struct MenuContent: View {
         Divider()
         Text(model.accessibilityGranted ? model.engineDescription : "Accessibility permission needed")
         Button("Setup Assistant…") { AppDelegate.shared?.showOnboarding() }
-        Button("Settings…") { AppDelegate.shared?.showSettings() }
-            .keyboardShortcut(",")
+        Button("Settings…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
+        }
+        .keyboardShortcut(",")
         Divider()
         Button("Quit whoRU") { NSApp.terminate(nil) }
             .keyboardShortcut("q")

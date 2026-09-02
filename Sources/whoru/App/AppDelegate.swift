@@ -8,6 +8,13 @@ import WhoRUMac
 /// `log stream --predicate 'subsystem == "com.yairixstudio.whoru"'` shows what the app sees.
 let log = Logger(subsystem: WhoRUMac.bundleIdentifier, category: "app")
 
+private struct SettingsOpener: View {
+    @Environment(\.openSettings) private var openSettings
+    var body: some View {
+        Color.clear.onAppear { openSettings() }
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static private(set) var shared: AppDelegate?
@@ -178,13 +185,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         historyWindow?.makeKeyAndOrderFront(nil)
     }
 
-    /// The SwiftUI Settings scene, brought to the front even though whoRU is
-    /// an accessory app without a Dock icon.
+    /// Opens the SwiftUI Settings scene from AppKit code. The only public way
+    /// in is the `openSettings` environment action, which needs a view, so a
+    /// zero-size window hosts one for a moment.
+    private var settingsOpener: NSWindow?
+
     func showSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        DispatchQueue.main.async {
-            NSApp.windows.first { $0.title.localizedCaseInsensitiveContains("settings") || $0.identifier?.rawValue.contains("Settings") == true }?.makeKeyAndOrderFront(nil)
+        let window = NSWindow(contentRect: NSRect(x: -1000, y: -1000, width: 1, height: 1), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0
+        window.contentView = NSHostingView(rootView: SettingsOpener())
+        window.orderFront(nil)
+        settingsOpener = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.settingsOpener?.close()
+            self?.settingsOpener = nil
         }
     }
 
