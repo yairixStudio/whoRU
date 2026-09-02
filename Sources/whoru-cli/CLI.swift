@@ -36,7 +36,7 @@ struct CLI {
         whoru-cli – who is really asking?
 
         usage:
-          whoru-cli scan <path | requester name> [--service <name>] [--json] [--no-ai] [--no-store] [--depth fast|balanced|deep] [--locale <tag>] [--slow]
+          whoru-cli scan <path | requester name> [--service <name>] [--json] [--no-ai] [--no-store] [--engine auto|claudeCode|claudeAPI|codex|gemini|local] [--model <name>] [--depth fast|balanced|deep] [--locale <tag>] [--slow]
           whoru-cli parse "<dialog title>" ["<dialog body>"]
           whoru-cli resolve "<requester name>"
           whoru-cli history [--limit N]
@@ -65,6 +65,8 @@ struct CLI {
         let paths = DefaultPaths()
         var settings = (try? JSONFileSettingsStore(paths: paths).load()) ?? Settings()
         if noAI { settings.engine = .none }
+        if let engine = options.value("--engine").flatMap(EngineChoice.init(rawValue:)) { settings.engine = engine }
+        if let modelName = options.value("--model") { settings.engineModels[settings.engine.rawValue] = modelName }
         if let depth = options.value("--depth").flatMap(AnalysisDepth.init(rawValue:)) { settings.depth = depth }
         let store: (any ScanStore)? = noStore ? nil : JSONFileScanStore(paths: paths)
         let environment = await MacEnvironment.environment(settings: settings, store: store, locale: locale)

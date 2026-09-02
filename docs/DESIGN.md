@@ -155,7 +155,11 @@ One `Analyst` protocol, three implementations. First run picks Claude Code if in
 |---|---|---|---|
 | Claude API (fastest) | `POST /v1/messages` from URLSession with streaming and tool use; thin hand-written layer | About a second to first token, full control of tools and output format, transparent cost | Needs an API key; all tools implemented in-app |
 | Claude Code headless (zero setup) | `claude -p` child process with JSON output, `--resume` for chat | Uses an existing subscription; gets a metadata-only Bash allowlist (codesign, spctl, shasum, mdls, xattr, ps, lsof, plutil, stat, file, otool) so it can run checks we did not foresee. Reading, listing and writing tools are explicitly disallowed and the process runs in an empty scratch directory: anything it touches is attributed to whoRU by macOS, and the first live run showed it reaching for the Desktop folder | Slower startup (about a minute for a verdict), depends on the installed CLI |
-| Local model (later) | Ollama or similar on localhost | Zero network egress | Lower quality, no reliable tools |
+| Codex CLI | `codex exec` with a read-only sandbox, no session files, the answer written to a file | Uses an existing OpenAI subscription; no key in whoRU | No tools (answers from the bundle only); follow-up questions resend the transcript |
+| Gemini CLI | `gemini -p` | Uses an existing Google account | Same limits as Codex; untested on a live machine so far |
+| Local model | Ollama or similar on localhost | Zero network egress | Lower quality, no reliable tools |
+
+Automatic order: Claude Code (if its signature verifies), an API key, Codex, Gemini, none. Each command-line engine has a model picker whose first entry is the CLI's own default.
 
 ### 9.2 Models
 
@@ -257,15 +261,19 @@ Not “inspired by Apple” but built from Apple’s parts: Liquid Glass, the sy
 
 **Accessibility and localization.** The panel is a containing accessibility element; the verdict is announced when ready; each evidence row is described. Reduce Motion, Reduce Transparency and Increase Contrast are honored. Hebrew and English from day one in a String Catalog; SwiftUI mirrors the layout; technical values stay LTR; the model writes in the user’s system language.
 
-## 14. Settings *(decided: 16 rows, 4 tabs)*
+## 14. Settings *(decided: five tabs, few rows)*
 
-General: launch at login (on), show next to dialogs (on), ask the model automatically (on; off shows evidence and the deterministic headline, model on click), show for permissions (all, checklist), shortcuts.
+General: launch at login (on), show next to dialogs (on), ask the AI automatically (on), strictness (standard / strict), permissions to watch (all, behind a disclosure), trusted and blocked publishers (behind a disclosure), Accessibility status.
 
-AI: engine (auto-detected; Claude Code / API key / none; local model appears only if Ollama is running), API key (one field, live validation, Keychain), analysis depth (fast / balanced / deep), monthly budget ($5 with a usage meter; at the cap: evidence only), allow web search (off).
+AI: engine (automatic / Claude Code / Claude API / Codex CLI / Gemini CLI / local / none) with what is installed listed underneath; model per command-line engine (the CLI's default first); for the API: key with live validation, analysis depth, monthly budget with a meter, web search (off).
 
-Privacy: local-only mode (off), VirusTotal (off, with key), “What was sent?” viewer. Fixed, not settings: file contents never leave; the username in paths is always redacted.
+Privacy: local-only mode (off), VirusTotal (off, with key), the three fixed statements, Full Disk Access button, data folder, reset.
 
-Advanced: Full Disk Access (button and explanation), publishers (one table with a trust column: normal / trusted / blocked), history retention (90 days), export/import (JSON without secrets), debug panel (AX tree, timings against budget, JSON sent), uninstall.
+History: retention (1, 3, 7, 14, 30, 90, 365 days or forever), counts and this month's spend, recent decisions inline, the full history window, delete all.
+
+About: version, one line, “Made by Yairix Studio” with the GitHub link, source, issues, license.
+
+Strictness: *standard* treats a valid signature from a publisher in the built-in list as green even when notarization cannot be checked (command-line tools). *Strict* requires notarization or an official-source match for green, and keeps unknown download origin, or a sensitive permission from software Apple never checked, amber.
 
 Everything else from earlier drafts became a fixed default: language follows the system; auto-close 1.2 s; no sound; models derived from depth; effort derived from depth; 8 tool calls, 20 s soft and 45 s hard timeouts, always streaming; engine paths auto-detected; process chain always sent and shown in “What was sent?”; all checks on; trust and block lists folded into the publisher table; manifest sources built in and extensible via JSON.
 
