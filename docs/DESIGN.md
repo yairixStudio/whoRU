@@ -79,7 +79,7 @@ TCC dialogs are drawn by `UserNotificationCenter` (`com.apple.UserNotificationCe
 
 From the new window’s AX tree the Watcher collects the `AXStaticText` elements and buttons. The first text is the title (name and request); the second is the usage description the app declared in its Info.plist, which is evidence in itself and is passed to the model marked hostile. Requester name and permission are extracted with a pattern table (Appendix A). English patterns are built in; other languages come from fixtures contributed by users, never guessed.
 
-When the window is destroyed the user has answered. The history records “answered” and offers a one-click “I allowed / I denied”; with Full Disk Access the decision can be read from `TCC.db` a few seconds later.
+When the window is destroyed the user has answered. The answer itself is read from the unified log a moment later: `tccd` logs every request with its service, the responsible program and the result, and the user who answered can read that log without any permission. The one-click “I allowed / I denied” remains as the fallback when the log has nothing.
 
 *Open assumption to verify first:* that AX events on these dialogs are reliable on macOS 26.
 
@@ -94,7 +94,7 @@ Strategies in order; stop at the first high-confidence hit but keep collecting c
 | 3 | App helper | Walk `ppid` to the parent app, match the helper’s `CFBundleName` | medium |
 | 4 | Launch Services | `lsappinfo find` / `info` | medium |
 | 5 | Spotlight | `mdfind "kMDItemDisplayName == '…'"`, filtered to executables and bundles | low (candidates only) |
-| 6 | `TCC.db` (needs FDA) | The record written after the decision | high, after the fact |
+| 6 | Unified log (`tccd`, no permission needed) | The request and its result, logged as the user answers | high, after the fact |
 | 7 | Ask the user | Candidate list or file picker | — |
 
 **Impersonation.** A name that matches a system app or a known publisher whose path or Team ID does not match that publisher is a red finding on its own and is shown before anything else.
