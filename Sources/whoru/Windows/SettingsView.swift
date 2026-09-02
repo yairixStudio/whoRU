@@ -15,9 +15,7 @@ struct SettingsView: View {
             HistoryTab(model: model).tabItem { Label("History", systemImage: "clock") }
             AboutTab().tabItem { Label("About", systemImage: "info.circle") }
         }
-        .frame(width: 560)
-        .frame(minHeight: 420)
-        .scenePadding()
+        .frame(width: 560, height: 640)
     }
 }
 
@@ -412,7 +410,8 @@ private struct AboutTab: View {
             .font(.callout)
             Spacer(minLength: 0)
         }
-        .padding(.top, 28)
+        .padding(.top, 36)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
