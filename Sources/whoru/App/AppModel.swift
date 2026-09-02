@@ -131,7 +131,7 @@ final class AppModel {
             default: engineDescription = analyst.id
             }
         } else {
-            engineDescription = "Evidence only (no AI engine)"
+            engineDescription = settings.engine == .none ? "Evidence only, no AI" : "Evidence only · no AI agent found"
         }
         monthlySpend = (try? await store.monthlySpend()) ?? 0
     }
@@ -237,6 +237,7 @@ final class AppModel {
 
     func dismiss(_ session: ScanSession) {
         sessions.removeAll { $0.id == session.id }
+        // The last scan stays reachable from the menu even after its panel is gone.
     }
 
     // MARK: Login item

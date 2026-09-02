@@ -31,9 +31,13 @@ private struct GeneralTab: View {
             Section {
                 Toggle("Launch at login", isOn: $model.settings.launchAtLogin)
                 Toggle("Show next to permission dialogs", isOn: $model.settings.showNextToDialogs)
-                Toggle("Ask the AI automatically", isOn: $model.settings.askModelAutomatically)
+                if model.settings.engine != .none {
+                    Toggle("Ask the AI automatically", isOn: $model.settings.askModelAutomatically)
+                }
             } footer: {
-                Text("With automatic asking off, the panel shows the evidence and the deterministic verdict; the AI runs when you ask a question.")
+                if model.settings.engine != .none {
+                    Text("With automatic asking off, the panel shows the evidence and the deterministic verdict; the AI runs when you ask a question.")
+                }
             }
 
             Section {
@@ -104,10 +108,9 @@ private struct PublisherList: View {
 
 // MARK: - AI
 
+/// Agents only: the tools people already have. No keys, no accounts.
 private struct AITab: View {
     @Bindable var model: AppModel
-    @State private var apiKey = ""
-    @State private var keyMessage = ""
     @State private var detected: [EngineChoice: String] = [:]
 
     private var engine: EngineChoice { model.settings.engine }
@@ -115,21 +118,28 @@ private struct AITab: View {
     var body: some View {
         Form {
             Section {
-                Picker("Engine", selection: $model.settings.engine) {
-                    ForEach([EngineChoice.auto, .claudeCode, .claudeAPI, .codex, .gemini, .local, .none], id: \.self) { choice in
-                        Text(choice.displayName).tag(choice)
+                Picker("AI agent", selection: $model.settings.engine) {
+                    ForEach([EngineChoice.auto, .claudeCode, .codex, .gemini, .none], id: \.self) { choice in
+                        Text(choice == .none ? "None" : choice.displayName).tag(choice)
                     }
                 }
-                LabeledContent("Active", value: model.engineDescription)
+                if engine != .none {
+                    LabeledContent("Active", value: model.engineDescription)
+                }
             } footer: {
-                Text("Automatic picks the first one available: Claude Code, an API key, Codex, Gemini.")
+                switch engine {
+                case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
+                case .auto: Text("Automatic uses the first agent installed: Claude Code, Codex, Gemini. The agent explains the evidence and answers questions; it cannot override it.")
+                default: Text("The agent explains the evidence and answers questions; it cannot override it.")
+                }
             }
 
-            Section("Installed") {
-                LabeledContent("Claude Code", value: detected[.claudeCode] ?? "…")
-                LabeledContent("Codex CLI", value: detected[.codex] ?? "…")
-                LabeledContent("Gemini CLI", value: detected[.gemini] ?? "…")
-                LabeledContent("Claude API key", value: model.secrets.secret(.anthropicAPIKey) != nil ? "Saved in Keychain" : "None")
+            if engine != .none {
+                Section("Installed") {
+                    LabeledContent("Claude Code", value: detected[.claudeCode] ?? "…")
+                    LabeledContent("Codex CLI", value: detected[.codex] ?? "…")
+                    LabeledContent("Gemini CLI", value: detected[.gemini] ?? "…")
+                }
             }
 
             if [.claudeCode, .codex, .gemini].contains(engine) {
@@ -138,39 +148,13 @@ private struct AITab: View {
                 } header: {
                     Text("Model")
                 } footer: {
-                    Text("“Default” uses whatever the command-line tool is configured with.")
-                }
-            }
-
-            if engine == .claudeAPI || engine == .auto {
-                Section("Claude API") {
-                    SecureField("API key", text: $apiKey, prompt: Text(model.secrets.secret(.anthropicAPIKey) != nil ? "•••••••• (saved)" : "sk-ant-…"))
-                    HStack {
-                        Button("Save and Check") { Task { await saveKey() } }.disabled(apiKey.isEmpty)
-                        Button("Remove") { try? model.secrets.setSecret(nil, for: .anthropicAPIKey); keyMessage = "Removed"; refresh() }
-                        Text(keyMessage).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Picker("Analysis depth", selection: $model.settings.depth) {
-                        ForEach(AnalysisDepth.allCases, id: \.self) { depth in
-                            Text("\(depth.rawValue.capitalized) · \(depth.modelID)").tag(depth)
-                        }
-                    }
-                    Stepper(value: $model.settings.monthlyBudgetUSD, in: 1...100, step: 1) {
-                        LabeledContent("Monthly budget", value: String(format: "$%.0f · spent $%.2f", model.settings.monthlyBudgetUSD, model.monthlySpend))
-                    }
-                    Toggle("Allow the AI to search the web", isOn: $model.settings.allowWebSearch)
-                }
-            }
-
-            if engine == .local {
-                Section("Local model") {
-                    TextField("Server", text: $model.settings.localModelURL)
-                    TextField("Model", text: $model.settings.localModelName)
+                    Text("“Default” uses whatever the tool itself is configured with.")
                 }
             }
         }
         .formStyle(.grouped)
         .task { await detect() }
+        .onChange(of: model.settings.engine) { _, _ in Task { await model.refreshEngineDescription() } }
     }
 
     private func detect() async {
@@ -193,24 +177,6 @@ private struct AITab: View {
         } else {
             detected[.gemini] = "Not installed"
         }
-    }
-
-    private func saveKey() async {
-        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            let models = try await ClaudeAPIAnalyst.listModels(apiKey: key)
-            try model.secrets.setSecret(key, for: .anthropicAPIKey)
-            keyMessage = "Works · \(models.count) models"
-            apiKey = ""
-            refresh()
-        } catch {
-            keyMessage = "Not accepted: \(error)"
-        }
-    }
-
-    private func refresh() {
-        model.settings = model.settings
-        Task { await model.refreshEngineDescription() }
     }
 }
 

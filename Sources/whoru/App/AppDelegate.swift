@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static private(set) var shared: AppDelegate?
 
     let model = AppModel()
+    private var statusItem: StatusItemController?
     private var watcher: AXDialogWatcher?
     private var panels: [String: CompanionPanel] = [:]
     private var closeTimers: [String: Task<Void, Never>] = [:]
@@ -39,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         AppLog.shared.info("app", "whoRU \(version) (\(build)) launched on macOS \(ProcessInfo.processInfo.operatingSystemVersionString) from \(Bundle.main.bundlePath) · accessibility \(AccessibilityPermission.isGranted ? "granted" : "not granted") · args \(CommandLine.arguments.dropFirst().joined(separator: " "))")
         model.applyLaunchAtLogin()
+        statusItem = StatusItemController(model: model)
         if !model.settings.onboardingCompleted || !AccessibilityPermission.isGranted || CommandLine.arguments.contains("--onboarding") {
             showOnboarding()
         }
@@ -60,8 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 guard let self else { return }
                 let granted = AccessibilityPermission.isGranted
-                if granted != self.model.accessibilityGranted { self.model.accessibilityGranted = granted }
+                if granted != self.model.accessibilityGranted {
+                    self.model.accessibilityGranted = granted
+                    AppLog.shared.info("app", "accessibility \(granted ? "granted" : "revoked")")
+                }
                 if granted { self.startWatcherIfPossible() }
+                self.statusItem?.updateIcon()
             }
         }
     }
@@ -111,12 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let panel = panels[id] else { return }
             let session = panel.session
             session.dialogClosed = true
+            // The user answered; the panel goes with the dialog. A conversation
+            // in progress keeps it, as a normal window.
             if session.chatActive {
                 panel.becomeStandaloneWindow()
                 panels[id] = nil
                 return
             }
-            scheduleClose(id: id, after: 5)
+            scheduleClose(id: id, after: 0.35)
         }
     }
 
@@ -130,10 +138,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.panels[id] = nil
                 return
             }
+            let session = panel.session
             panel.fadeOut { [weak self] in
                 Task { @MainActor in
                     self?.panels[id] = nil
-                    if let session = self?.panels[id]?.session { self?.model.dismiss(session) }
+                    self?.model.dismiss(session)
                 }
             }
         }
@@ -147,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open.canChooseDirectories = true
         open.allowsMultipleSelection = false
         open.treatsFilePackagesAsDirectories = false
-        open.message = "Choose an app or program to check"
+        open.message = "Choose an app or program. whoRU checks who made it and whether it is what it claims: signature, notarization, origin, location. It is not a virus scan."
         open.prompt = "Check"
         NSApp.activate(ignoringOtherApps: true)
         guard open.runModal() == .OK, let url = open.url else { return }

@@ -5,15 +5,9 @@ import WhoRUCore
 struct WhoRUApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    // The menu-bar item is an NSStatusItem owned by the delegate; the only
+    // SwiftUI scene is Settings, so ⌘, and the openSettings action work.
     var body: some Scene {
-        MenuBarExtra {
-            MenuContent(model: delegate.model)
-        } label: {
-            Image(systemName: delegate.model.isPaused ? "person.questionmark" : "person.fill.questionmark")
-                .accessibilityLabel("whoRU")
-        }
-        .menuBarExtraStyle(.menu)
-
         Settings {
             SettingsView(model: delegate.model)
         }

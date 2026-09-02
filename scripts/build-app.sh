@@ -22,7 +22,13 @@ BUNDLE_ID="com.yairixstudio.whoru"
 APP="build/whoRU.app"
 
 echo "▸ swift build -c $CONFIG"
-swift build -c "$CONFIG" --product whoru 2>&1 | grep -E "error|warning: unre|Compiling|Build complete" || true
+BUILD_LOG="$(mktemp -t whoru-build)"
+if ! swift build -c "$CONFIG" --product whoru >"$BUILD_LOG" 2>&1; then
+  grep -E "error" "$BUILD_LOG" | head -20
+  echo "build failed"
+  exit 1
+fi
+grep -E "Build complete" "$BUILD_LOG" || true
 BIN=".build/$CONFIG/whoru"
 [ -x "$BIN" ] || { echo "build failed"; exit 1; }
 

@@ -12,15 +12,20 @@ struct OnboardingView: View {
 
     @State private var step: Step = .move
     @State private var accessibilityGranted = AccessibilityPermission.isGranted
-    @State private var claudeCodePath: String? = nil
-    @State private var claudeCodeVersion: String? = nil
-    @State private var claudeCodeTrusted = false
+    @State private var agents: [Agent] = []
+    @State private var detecting = true
     @State private var engineChoice: EngineChoice = .none
-    @State private var apiKey = ""
-    @State private var keyStatus: KeyStatus = .unknown
     @State private var demoTriggered = false
 
-    enum KeyStatus: Equatable { case unknown, checking, valid(Int), invalid(String) }
+    struct Agent: Identifiable {
+        var engine: EngineChoice
+        var path: String
+        var version: String
+        var verified: Bool
+        var id: String { engine.rawValue }
+    }
+
+    private var steps: [Step] { Step.allCases.filter { $0 != .move || MoveToApplications.isNeeded } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,12 +36,13 @@ struct OnboardingView: View {
             footer
                 .padding(20)
         }
-        .frame(width: 460, height: 540)
+        .frame(width: 460, height: 560)
         .background(.background)
-        .task { await detectEngines() }
+        .task { await detectAgents() }
         .task { await pollAccessibility() }
         .onAppear {
             if !MoveToApplications.isNeeded { step = AccessibilityPermission.isGranted ? .ai : .accessibility }
+            engineChoice = model.settings.engine == .auto ? .none : model.settings.engine
         }
     }
 
@@ -111,9 +117,9 @@ struct OnboardingView: View {
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
                 .frame(height: 72)
-            Text("Explain with AI?")
+            Text("Explain with an AI agent?")
                 .font(.largeTitle.weight(.semibold))
-            Text("The evidence works without it. An AI model adds a plain-language explanation and answers questions. Pick what you have; you can change this later.")
+            Text("The evidence works without it. An agent you already have adds a plain-language explanation and answers questions. Nothing to sign up for; you can change this later.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -121,30 +127,35 @@ struct OnboardingView: View {
                 .frame(maxWidth: 380)
 
             VStack(spacing: 8) {
-                if let path = claudeCodePath {
-                    engineCard(.claudeCode, title: "Use Claude Code",
-                               detail: claudeCodeTrusted ? "\(claudeCodeVersion ?? "found") · signature verified · no key needed" : "found at \(path) but the signature could not be verified",
-                               enabled: claudeCodeTrusted)
-                }
-                engineCard(.claudeAPI, title: "Use an API key", detail: "Faster answers. Pasted below, stored in your Keychain.", enabled: true)
-                if engineChoice == .claudeAPI {
-                    HStack {
-                        SecureField("sk-ant-…", text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { Task { await checkKey() } }
-                        Button("Check") { Task { await checkKey() } }
-                            .disabled(apiKey.isEmpty || keyStatus == .checking)
+                if detecting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    ForEach(agents) { agent in
+                        engineCard(agent.engine, title: "Use \(agent.engine.displayName)",
+                                   detail: agent.verified ? "\(agent.version) · signature verified · found at \(agent.path)" : "\(agent.version) · found at \(agent.path)",
+                                   enabled: true)
                     }
-                    keyStatusLine
+                    if agents.isEmpty {
+                        VStack(spacing: 4) {
+                            Text("No AI agent is installed.").font(.callout)
+                            HStack(spacing: 12) {
+                                Link("Claude Code", destination: URL(string: "https://claude.com/product/claude-code")!)
+                                Link("Codex CLI", destination: URL(string: "https://github.com/openai/codex")!)
+                                Link("Gemini CLI", destination: URL(string: "https://github.com/google-gemini/gemini-cli")!)
+                            }
+                            .font(.caption)
+                        }
+                        .padding(.bottom, 4)
+                    }
+                    engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true)
                 }
-                engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only.", enabled: true)
             }
             .frame(maxWidth: 380)
             Spacer()
         }
     }
 
-    private func engineCard(_ choice: EngineChoice, title: LocalizedStringKey, detail: String, enabled: Bool) -> some View {
+    private func engineCard(_ choice: EngineChoice, title: String, detail: String, enabled: Bool) -> some View {
         Button {
             if enabled { engineChoice = choice }
         } label: {
@@ -165,33 +176,26 @@ struct OnboardingView: View {
         .opacity(enabled ? 1 : 0.5)
     }
 
-    @ViewBuilder
-    private var keyStatusLine: some View {
-        switch keyStatus {
-        case .unknown: EmptyView()
-        case .checking: Label("Checking…", systemImage: "ellipsis").font(.caption).foregroundStyle(.secondary)
-        case .valid(let n): Label("Key works · \(n) models available", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-        case .invalid(let why): Label(why, systemImage: "xmark.circle.fill").font(.caption).foregroundStyle(.red)
-        }
-    }
-
     // MARK: Footer
 
     private var footer: some View {
         HStack {
             HStack(spacing: 6) {
-                ForEach(Step.allCases.filter { $0 != .move || MoveToApplications.isNeeded }, id: \.rawValue) { s in
+                ForEach(steps, id: \.rawValue) { s in
                     Circle().fill(s == step ? Color.primary : Color.secondary.opacity(0.3)).frame(width: 6, height: 6)
                 }
             }
             Spacer()
+            if let previous = previousStep {
+                Button("Back") { withAnimation { step = previous } }
+            }
             switch step {
             case .move:
-                Button("Not now") { step = AccessibilityPermission.isGranted ? .ai : .accessibility }
+                Button("Not now") { goForward() }
                 Button("Move to Applications") { MoveToApplications.moveAndRelaunch() }.buttonStyle(.borderedProminent)
             case .accessibility:
                 if accessibilityGranted {
-                    Button("Continue") { step = .ai }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    Button("Continue") { goForward() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 } else {
                     Button("Open System Settings") {
                         _ = AccessibilityPermission.requestWithSystemPrompt()
@@ -199,14 +203,14 @@ struct OnboardingView: View {
                     }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 }
             case .ai:
-                Button("Continue") { commitEngine(); step = .tryIt }
+                Button("Continue") { commitEngine(); goForward() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(engineChoice == .claudeAPI && !isKeyValid)
+                    .disabled(detecting)
             case .tryIt:
-                Button("Skip") { step = .done }
+                Button("Skip") { goForward() }
                 Button(demoTriggered ? "Continue" : "Try it now") {
-                    if demoTriggered { step = .done } else { demoTriggered = true; AppDelegate.shared?.triggerDemoPrompt() }
+                    if demoTriggered { goForward() } else { demoTriggered = true; AppDelegate.shared?.triggerDemoPrompt() }
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             case .done:
                 Button("Done") {
@@ -217,23 +221,44 @@ struct OnboardingView: View {
         }
     }
 
-    private var isKeyValid: Bool {
-        if case .valid = keyStatus { return true }
-        return false
+    private var previousStep: Step? {
+        guard let index = steps.firstIndex(of: step), index > 0 else { return nil }
+        let previous = steps[index - 1]
+        // Never go back to the Accessibility step once it is granted; there is nothing to do there.
+        if previous == .accessibility, accessibilityGranted, index > 1 { return steps[index - 2] }
+        return previous
+    }
+
+    private func goForward() {
+        guard let index = steps.firstIndex(of: step), index + 1 < steps.count else { return }
+        withAnimation { step = steps[index + 1] }
     }
 
     // MARK: Actions
 
-    private func detectEngines() async {
+    private func detectAgents() async {
+        var found: [Agent] = []
         if let path = ClaudeCodeAnalyst.locate() {
-            claudeCodePath = path
-            claudeCodeTrusted = await ClaudeCodeVerifier.isTrusted(path)
-            claudeCodeVersion = await ClaudeCodeAnalyst.version(of: path)
-            if claudeCodeTrusted { engineChoice = .claudeCode }
-        } else if model.secrets.secret(.anthropicAPIKey) != nil {
-            engineChoice = .claudeAPI
-            keyStatus = .valid(0)
+            let trusted = await ClaudeCodeVerifier.isTrusted(path)
+            if trusted {
+                found.append(Agent(engine: .claudeCode, path: short(path), version: await ClaudeCodeAnalyst.version(of: path) ?? "found", verified: true))
+            }
         }
+        if let path = CodexAnalyst.locate() {
+            found.append(Agent(engine: .codex, path: short(path), version: await CodexAnalyst.version(of: path) ?? "found", verified: false))
+        }
+        if let path = GeminiAnalyst.locate() {
+            found.append(Agent(engine: .gemini, path: short(path), version: await GeminiAnalyst.version(of: path) ?? "found", verified: false))
+        }
+        agents = found
+        detecting = false
+        if engineChoice == .none || !found.contains(where: { $0.engine == engineChoice }) {
+            engineChoice = found.first?.engine ?? .none
+        }
+    }
+
+    private func short(_ path: String) -> String {
+        path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
     }
 
     private func pollAccessibility() async {
@@ -251,23 +276,9 @@ struct OnboardingView: View {
         }
     }
 
-    private func checkKey() async {
-        keyStatus = .checking
-        do {
-            let models = try await ClaudeAPIAnalyst.listModels(apiKey: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
-            keyStatus = .valid(models.count)
-        } catch {
-            keyStatus = .invalid(String(describing: error))
-        }
-    }
-
     private func commitEngine() {
         var settings = model.settings
         settings.engine = engineChoice
-        if engineChoice == .claudeCode { settings.claudeCodePath = claudeCodePath }
-        if engineChoice == .claudeAPI, !apiKey.isEmpty {
-            try? model.secrets.setSecret(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: .anthropicAPIKey)
-        }
         model.settings = settings
         Task { await model.refreshEngineDescription() }
     }

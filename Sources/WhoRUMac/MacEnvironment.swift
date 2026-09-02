@@ -40,17 +40,18 @@ public enum MacEnvironment {
         case .local:
             return nil
         default:
+            // Agents first: they need no key. An API key is used only if it was set up on the command line.
             if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate(), await ClaudeCodeVerifier.isTrusted(path) {
                 return ClaudeCodeAnalyst(executable: path, model: settings.model(for: .claudeCode))
-            }
-            if let key = secrets.secret(.anthropicAPIKey) {
-                return ClaudeAPIAnalyst(apiKey: key, hardTimeout: .seconds(settings.hardTimeoutSeconds))
             }
             if let path = settings.codexPath ?? CodexAnalyst.locate() {
                 return CodexAnalyst(executable: path, model: settings.model(for: .codex))
             }
             if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
                 return GeminiAnalyst(executable: path, model: settings.model(for: .gemini))
+            }
+            if let key = secrets.secret(.anthropicAPIKey) {
+                return ClaudeAPIAnalyst(apiKey: key, hardTimeout: .seconds(settings.hardTimeoutSeconds))
             }
             return nil
         }
