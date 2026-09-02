@@ -2,60 +2,13 @@ import AppKit
 import SwiftUI
 import WhoRUCore
 
-/// Three layers of information in one panel that grows: glance, explain,
-/// inspect, and a question field. Built from system parts only.
-struct CompanionView: View {
-    @Bindable var session: ScanSession
-    let model: AppModel
+/// The fixed strip above the scrolling content: who is speaking, and a close
+/// button that is always reachable, however far the content is scrolled.
+struct CompanionHeader: View {
+    let session: ScanSession
     let onClose: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
-    @State private var hovering = false
-    @State private var showExplain = false
-    @State private var showEvidence = false
-    @State private var showRaw: EvidenceItem?
-    @FocusState private var questionFocused: Bool
-
-    private var animation: Animation { reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15) }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            identity
-            verdictRow
-            if session.hardScore != nil {
-                explainSection
-                evidenceSection
-                if session.record?.analystSession != nil, !session.isManualWithoutEngine {
-                    chatSection
-                }
-            }
-            if session.dialogClosed, session.decision == .unknown, !session.isManual {
-                decisionRow
-            }
-        }
-        .padding(14)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-        .overlay {
-            if contrast == .increased {
-                RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.separator, lineWidth: 1)
-            }
-        }
-        .onHover { hovering = $0 }
-        .animation(animation, value: session.evidence.count)
-        .animation(animation, value: session.verdict)
-        .animation(animation, value: showExplain)
-        .animation(animation, value: showEvidence)
-        .animation(animation, value: session.messages.count)
-        .sheet(item: $showRaw) { item in RawOutputSheet(item: item) }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("whoRU")
-    }
-
-    // MARK: Header
-
-    private var header: some View {
         HStack {
             Label("whoRU", systemImage: "person.fill.questionmark")
                 .labelStyle(.titleAndIcon)
@@ -70,13 +23,61 @@ struct CompanionView: View {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .frame(width: 16, height: 16)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
                     .background(.quaternary, in: Circle())
             }
             .buttonStyle(.plain)
-            .opacity(hovering || session.dialogClosed ? 1 : 0)
             .accessibilityLabel("Close")
         }
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
+    }
+}
+
+/// Three layers of information in one panel that grows: glance, explain,
+/// inspect, and a question field. Built from system parts only. The glass,
+/// the rounded clip and the header live in `CompanionRoot`, around the scroll.
+struct CompanionView: View {
+    @Bindable var session: ScanSession
+    let model: AppModel
+    let onClose: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showExplain = false
+    @State private var showEvidence = false
+    @State private var showRaw: EvidenceItem?
+    @FocusState private var questionFocused: Bool
+
+    private var animation: Animation { reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            identity
+            verdictRow
+            if session.hardScore != nil {
+                explainSection
+                evidenceSection
+                if session.record?.analystSession != nil, !session.isManualWithoutEngine {
+                    chatSection
+                }
+            }
+            if session.dialogClosed, session.decision == .unknown, !session.isManual {
+                decisionRow
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 14)
+        .padding(.top, 2)
+        .animation(animation, value: session.evidence.count)
+        .animation(animation, value: session.verdict)
+        .animation(animation, value: showExplain)
+        .animation(animation, value: showEvidence)
+        .animation(animation, value: session.messages.count)
+        .sheet(item: $showRaw) { item in RawOutputSheet(item: item) }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("whoRU")
     }
 
     // MARK: Identity
@@ -200,13 +201,15 @@ struct CompanionView: View {
                         FlowLayout(spacing: 6) {
                             ForEach(verdict.suggestedQuestions, id: \.self) { question in
                                 Button(question) { model.send(question, in: session) }
-                                    .buttonStyle(.glass)
+                                    .buttonStyle(.bordered)
                                     .controlSize(.small)
                             }
                         }
+                        .padding(.vertical, 2)
                     }
                 }
                 .padding(.top, 6)
+                .padding(.bottom, 2)
             } label: {
                 Text("Explanation").font(.callout)
             }
@@ -248,17 +251,18 @@ struct CompanionView: View {
                     .accessibilityLabel("\(item.status.rawValue): \(item.key.rawValue), \(item.summary)")
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                HStack {
+                HStack(spacing: 8) {
                     if let record = session.record {
                         Button("What was sent?") { showRaw = Self.bundleItem(for: record) }
-                            .buttonStyle(.glass).controlSize(.mini)
+                            .buttonStyle(.bordered).controlSize(.small)
                     }
                     if let subject = session.subject {
                         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: subject.verificationPath)]) }
-                            .buttonStyle(.glass).controlSize(.mini)
+                            .buttonStyle(.bordered).controlSize(.small)
                     }
                 }
-                .padding(.top, 4)
+                .padding(.top, 6)
+                .padding(.bottom, 4)
             }
             .padding(.top, 6)
         } label: {
@@ -317,7 +321,8 @@ struct CompanionView: View {
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 7)
-            .glassEffect(.regular.interactive(), in: .capsule)
+            .background(.quaternary.opacity(0.6), in: Capsule())
+            .overlay(Capsule().stroke(.separator.opacity(0.6), lineWidth: 0.5))
         }
     }
 
@@ -327,8 +332,8 @@ struct CompanionView: View {
         HStack(spacing: 8) {
             Text("What did you choose?").font(.caption).foregroundStyle(.secondary)
             Spacer()
-            Button("Allowed") { model.recordDecision(.allowed, for: session) }.buttonStyle(.glass).controlSize(.small)
-            Button("Denied") { model.recordDecision(.denied, for: session) }.buttonStyle(.glass).controlSize(.small)
+            Button("Allowed") { model.recordDecision(.allowed, for: session) }.buttonStyle(.bordered).controlSize(.small)
+            Button("Denied") { model.recordDecision(.denied, for: session) }.buttonStyle(.bordered).controlSize(.small)
         }
     }
 

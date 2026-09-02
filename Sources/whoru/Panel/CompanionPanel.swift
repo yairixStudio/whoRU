@@ -198,20 +198,40 @@ struct CompanionRoot: View {
     let onHeight: (CGFloat) -> Void
     let onClose: () -> Void
 
-    @State private var naturalHeight: CGFloat = 150
+    @State private var contentHeight: CGFloat = 120
+    @State private var headerHeight: CGFloat = 30
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    private var total: CGFloat { headerHeight + contentHeight }
+    private var scrolls: Bool { total > CompanionPanel.maxHeight }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: naturalHeight > CompanionPanel.maxHeight) {
-            CompanionView(session: session, model: model, onClose: onClose)
-                .frame(width: CompanionPanel.width)
-                .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.height } action: { height in
-                    naturalHeight = height
-                    onHeight(height)
+        VStack(spacing: 0) {
+            CompanionHeader(session: session, onClose: onClose)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    headerHeight = height
+                    onHeight(height + contentHeight)
                 }
+            ScrollView(.vertical, showsIndicators: scrolls) {
+                CompanionView(session: session, model: model, onClose: onClose)
+                    .frame(width: CompanionPanel.width)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        contentHeight = height
+                        onHeight(headerHeight + height)
+                    }
+            }
+            .scrollDisabled(!scrolls)
         }
-        .scrollDisabled(naturalHeight <= CompanionPanel.maxHeight)
-        .frame(width: CompanionPanel.width, height: min(naturalHeight, CompanionPanel.maxHeight))
+        .frame(width: CompanionPanel.width, height: min(total, CompanionPanel.maxHeight))
+        .clipShape(shape)
+        .glassEffect(.regular, in: shape)
+        .overlay {
+            if contrast == .increased {
+                shape.stroke(.separator, lineWidth: 1)
+            }
+        }
         .opacity(presentation.visible ? 1 : 0)
         .scaleEffect(presentation.visible || reduceMotion ? 1 : 0.94, anchor: presentation.anchor)
         .animation(presentation.visible
