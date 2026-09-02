@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppLog.shared.info("app", "whoRU \(version) (\(build)) launched on macOS \(ProcessInfo.processInfo.operatingSystemVersionString) from \(Bundle.main.bundlePath) · accessibility \(AccessibilityPermission.isGranted ? "granted" : "not granted") · args \(CommandLine.arguments.dropFirst().joined(separator: " "))")
         model.applyLaunchAtLogin()
         statusItem = StatusItemController(model: model)
+        warmUpPanel()
         if !model.settings.onboardingCompleted || !AccessibilityPermission.isGranted || CommandLine.arguments.contains("--onboarding") {
             showOnboarding()
         }
@@ -73,6 +74,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Builds one panel offscreen at launch so that fonts, symbols, the glass
+    /// material and the SwiftUI runtime are warm when the first dialog appears.
+    private func warmUpPanel() {
+        let prompt = PermissionPrompt(title: "", requesterName: "whoRU", service: .other, requestPhrase: "")
+        let session = ScanSession(id: "warm-up", dialog: nil, prompt: prompt, rawTitle: "")
+        let panel = CompanionPanel(session: session, model: model)
+        panel.setFrame(NSRect(x: -10_000, y: -10_000, width: CompanionPanel.width, height: 150), display: true)
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { panel.orderOut(nil) }
+    }
 
     // MARK: Watching
 

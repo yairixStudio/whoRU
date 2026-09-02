@@ -1,6 +1,18 @@
 import AppKit
+import Observation
 import SwiftUI
 import WhoRUCore
+
+/// Drives the appear and dismiss motion of a panel, the way system panels
+/// move: a short spring in, scaling from the edge that faces the dialog, and
+/// a quick fade-and-shrink out.
+@MainActor
+@Observable
+final class PanelPresentation {
+    var visible = false
+    /// Where the panel grows from: the edge facing the dialog.
+    var anchor: UnitPoint = .topLeading
+}
 
 /// The glass panel next to the dialog. Non-activating so Enter still reaches
 /// the dialog's default button; floats above system dialogs; follows the
@@ -12,6 +24,7 @@ final class CompanionPanel: NSPanel {
     static let gap: CGFloat = 12
 
     let session: ScanSession
+    let presentation = PanelPresentation()
     private var hosting: NSHostingView<CompanionRoot>!
     private var dialogFrame: Rect?
     private var userOffset: CGPoint?
@@ -36,10 +49,9 @@ final class CompanionPanel: NSPanel {
         isMovableByWindowBackground = true
         animationBehavior = .none
         isReleasedWhenClosed = false
-        // Resizes happen every animation frame while content grows; keep them cheap.
         displaysWhenScreenProfileChanges = false
 
-        let root = CompanionRoot(session: session, model: model, onHeight: { [weak self] height in
+        let root = CompanionRoot(session: session, model: model, presentation: presentation, onHeight: { [weak self] height in
             self?.updateHeight(height)
         }, onClose: { [weak self] in
             self?.fadeOut()
@@ -58,7 +70,9 @@ final class CompanionPanel: NSPanel {
     /// instant: no animation, one frame update.
     func place(besideDialog frame: Rect) {
         dialogFrame = frame
-        setFrame(targetFrame(besideDialog: frame, height: currentHeight), display: true)
+        let target = targetFrame(besideDialog: frame, height: currentHeight)
+        presentation.anchor = target.minX >= Self.appKitRect(frame).maxX ? .topLeading : .topTrailing
+        setFrame(target, display: true)
     }
 
     private var currentHeight: CGFloat { min(contentHeight, Self.maxHeight) }
@@ -89,6 +103,7 @@ final class CompanionPanel: NSPanel {
     func placeStandalone() {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
+        presentation.anchor = .top
         setFrame(NSRect(x: visible.maxX - Self.width - 16, y: visible.maxY - currentHeight - 16, width: Self.width, height: currentHeight), display: true)
     }
 
@@ -133,25 +148,26 @@ final class CompanionPanel: NSPanel {
 
     // MARK: Appearance
 
+    /// Shows the panel: the window is on screen at once, and the content
+    /// springs in from the dialog's edge (fade + scale), or just fades when
+    /// Reduce Motion is on.
     func fadeIn() {
-        alphaValue = 0
+        alphaValue = 1
+        presentation.visible = false
         orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.25
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = 1
+        DispatchQueue.main.async { [presentation] in
+            presentation.visible = true
         }
     }
 
+    /// Hides it: content fades and shrinks slightly, then the window goes away.
     func fadeOut(completion: (() -> Void)? = nil) {
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
+        presentation.visible = false
+        let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.2
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.orderOut(nil)
             completion?()
-        })
+        }
     }
 
     /// When the dialog closes mid-conversation the panel stays, as a normal window.
@@ -172,15 +188,18 @@ final class CompanionPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Root view: measures the content's natural height and shows a scroll view
-/// only when it would not fit the panel's maximum height.
+/// Root view: measures the content's natural height, shows a scroll view
+/// only when it would not fit the panel's maximum height, and plays the
+/// appear and dismiss motion.
 struct CompanionRoot: View {
     let session: ScanSession
     let model: AppModel
+    let presentation: PanelPresentation
     let onHeight: (CGFloat) -> Void
     let onClose: () -> Void
 
     @State private var naturalHeight: CGFloat = 150
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: naturalHeight > CompanionPanel.maxHeight) {
@@ -193,5 +212,11 @@ struct CompanionRoot: View {
         }
         .scrollDisabled(naturalHeight <= CompanionPanel.maxHeight)
         .frame(width: CompanionPanel.width, height: min(naturalHeight, CompanionPanel.maxHeight))
+        .opacity(presentation.visible ? 1 : 0)
+        .scaleEffect(presentation.visible || reduceMotion ? 1 : 0.94, anchor: presentation.anchor)
+        .animation(presentation.visible
+                   ? (reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.32, bounce: 0.18))
+                   : .easeOut(duration: reduceMotion ? 0.15 : 0.18),
+                   value: presentation.visible)
     }
 }

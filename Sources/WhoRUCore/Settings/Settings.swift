@@ -25,12 +25,45 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     /// Models offered in the picker for command-line engines. Empty string is the CLI's own default.
     public var suggestedModels: [String] {
         switch self {
-        case .claudeCode: ["", "opus", "sonnet", "haiku"]
+        case .claudeCode: ["", "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
         case .codex: ["", "gpt-5", "gpt-5-codex", "o3"]
         case .gemini: ["", "gemini-2.5-pro", "gemini-2.5-flash"]
         default: []
         }
     }
+
+    /// Human name for a model id in the picker.
+    public func modelDisplayName(_ id: String) -> String {
+        switch id {
+        case "": "Default"
+        case "claude-fable-5-1": "Claude Fable 5.1"
+        case "claude-opus-5": "Claude Opus 5"
+        case "claude-sonnet-5": "Claude Sonnet 5"
+        case "claude-haiku-4-5": "Claude Haiku 4.5"
+        default: id
+        }
+    }
+
+    /// Where to get the tool. The minimum: a page and a one-line install.
+    public var installURL: URL? {
+        switch self {
+        case .claudeCode: URL(string: "https://docs.claude.com/en/docs/claude-code/quickstart")
+        case .codex: URL(string: "https://github.com/openai/codex")
+        case .gemini: URL(string: "https://github.com/google-gemini/gemini-cli")
+        default: nil
+        }
+    }
+
+    public var installCommand: String? {
+        switch self {
+        case .claudeCode: "curl -fsSL https://claude.ai/install.sh | bash"
+        case .codex: "npm install -g @openai/codex"
+        case .gemini: "npm install -g @google/gemini-cli"
+        default: nil
+        }
+    }
+
+    public static let agents: [EngineChoice] = [.claudeCode, .codex, .gemini]
 }
 
 /// How hard the evidence has to work before something is green.

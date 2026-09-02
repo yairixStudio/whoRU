@@ -39,7 +39,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
 
     static let ignoredOwners: Set<String> = ["Window Server", "Dock", "WindowManager", "Wallpaper", "Notification Center", "Control Center", "Spotlight", "SystemUIServer", "MenuBarAgent"]
 
-    public init(bundleIdentifiers: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.CoreServicesUIAgent", "com.apple.SecurityAgent"], pollInterval: TimeInterval = 0.15) {
+    public init(bundleIdentifiers: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.CoreServicesUIAgent", "com.apple.SecurityAgent"], pollInterval: TimeInterval = 0.1) {
         self.bundleIdentifiers = bundleIdentifiers
         self.pollInterval = pollInterval
         var cont: AsyncStream<DialogEvent>.Continuation!
@@ -165,6 +165,9 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard let window = axWindow(pid: info.pid, matching: info.frame) else {
             // Not exposed through AX (yet). Try again on the next poll a few times, then give up.
             retries[info.number, default: 0] += 1
+            if retries[info.number] == 1, known {
+                AppLog.shared.info("watcher", "window \(info.number) of \(info.owner) not readable yet; retrying")
+            }
             if retries[info.number, default: 0] > 6 {
                 retries[info.number] = nil
                 log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) (layer \(info.layer, privacy: .public)) exposes no AX window")
@@ -179,8 +182,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             return
         }
         retries[info.number] = nil
-        let texts = staticTexts(in: window)
-        let buttons = buttonTitles(in: window)
+        let (texts, buttons) = textsAndButtons(in: window)
         guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
             log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, no prompt pattern matched: \(texts.joined(separator: " | "), privacy: .public)")
             if known {
@@ -215,26 +217,33 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
 
     /// The AX window of `pid` whose frame matches, or the element under the
     /// window's centre as a fallback for processes that do not list windows.
+    /// Processes whose window list is not exposed through AX (the system
+    /// dialog process is one); for those we go straight to hit-testing.
+    private var noWindowList: Set<pid_t> = []
+
     private func axWindow(pid: pid_t, matching frame: Rect) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
-        var value: CFTypeRef?
-        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
-        if status == .success, let windows = value as? [AXUIElement] {
-            for window in windows {
-                if let f = self.frame(of: window), abs(f.x - frame.x) < 6, abs(f.y - frame.y) < 6, abs(f.width - frame.width) < 6 {
-                    return window
+        if !noWindowList.contains(pid) {
+            var value: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+            if status == .success, let windows = value as? [AXUIElement] {
+                for window in windows {
+                    if let f = self.frame(of: window), abs(f.x - frame.x) < 6, abs(f.y - frame.y) < 6, abs(f.width - frame.width) < 6 {
+                        return window
+                    }
                 }
+                if windows.count == 1 { return windows[0] }
+                log.info("pid \(pid, privacy: .public): \(windows.count, privacy: .public) AX windows, none at \(Int(frame.x), privacy: .public),\(Int(frame.y), privacy: .public)")
+            } else {
+                log.info("pid \(pid, privacy: .public): AXWindows unavailable (AXError \(status.rawValue, privacy: .public))")
+                noWindowList.insert(pid)
             }
-            if windows.count == 1 { return windows[0] }
-            log.info("pid \(pid, privacy: .public): \(windows.count, privacy: .public) AX windows, none at \(Int(frame.x), privacy: .public),\(Int(frame.y), privacy: .public)")
-        } else {
-            log.info("pid \(pid, privacy: .public): AXWindows unavailable (AXError \(status.rawValue, privacy: .public))")
-        }
-        for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
-            var single: CFTypeRef?
-            if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single, CFGetTypeID(single) == AXUIElementGetTypeID() {
-                return (single as! AXUIElement)
+            for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+                var single: CFTypeRef?
+                if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single, CFGetTypeID(single) == AXUIElementGetTypeID() {
+                    return (single as! AXUIElement)
+                }
             }
         }
         // Fallback: hit-test a few points inside the window and walk up to its window element.
@@ -292,35 +301,28 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         return (value as? [AXUIElement]) ?? []
     }
 
-    private func staticTexts(in element: AXUIElement) -> [String] {
+    /// One traversal for both, since every attribute read is an IPC round trip.
+    private func textsAndButtons(in element: AXUIElement) -> ([String], [String]) {
         var texts: [String] = []
-        var budget = 400
+        var titles: [String] = []
+        var budget = 300
         func walk(_ node: AXUIElement, depth: Int) {
             guard depth < 10, budget > 0 else { return }
             budget -= 1
             let role = attribute(kAXRoleAttribute, of: node)
-            if role == kAXStaticTextRole, let value = attribute(kAXValueAttribute, of: node), !value.isEmpty {
-                texts.append(value)
+            if role == kAXStaticTextRole {
+                if let value = attribute(kAXValueAttribute, of: node), !value.isEmpty { texts.append(value) }
+                return // leaves
             }
+            if role == kAXButtonRole {
+                if let title = attribute(kAXTitleAttribute, of: node), !title.isEmpty { titles.append(title) }
+                return
+            }
+            if role == kAXImageRole { return }
             for child in children(of: node) { walk(child, depth: depth + 1) }
         }
         walk(element, depth: 0)
-        return texts
-    }
-
-    private func buttonTitles(in element: AXUIElement) -> [String] {
-        var titles: [String] = []
-        var budget = 400
-        func walk(_ node: AXUIElement, depth: Int) {
-            guard depth < 10, budget > 0 else { return }
-            budget -= 1
-            if attribute(kAXRoleAttribute, of: node) == kAXButtonRole, let title = attribute(kAXTitleAttribute, of: node), !title.isEmpty {
-                titles.append(title)
-            }
-            for child in children(of: node) { walk(child, depth: depth + 1) }
-        }
-        walk(element, depth: 0)
-        return titles
+        return (texts, titles)
     }
 }
 

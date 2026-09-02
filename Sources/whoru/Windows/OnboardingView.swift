@@ -12,18 +12,10 @@ struct OnboardingView: View {
 
     @State private var step: Step = .move
     @State private var accessibilityGranted = AccessibilityPermission.isGranted
-    @State private var agents: [Agent] = []
+    @State private var agents: [AgentStatus] = []
     @State private var detecting = true
     @State private var engineChoice: EngineChoice = .none
     @State private var demoTriggered = false
-
-    struct Agent: Identifiable {
-        var engine: EngineChoice
-        var path: String
-        var version: String
-        var verified: Bool
-        var id: String { engine.rawValue }
-    }
 
     private var steps: [Step] { Step.allCases.filter { $0 != .move || MoveToApplications.isNeeded } }
 
@@ -131,23 +123,12 @@ struct OnboardingView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     ForEach(agents) { agent in
-                        engineCard(agent.engine, title: "Use \(agent.engine.displayName)",
-                                   detail: agent.verified ? "\(agent.version) · signature verified · found at \(agent.path)" : "\(agent.version) · found at \(agent.path)",
-                                   enabled: true)
+                        let usable = agent.isInstalled && (agent.engine != .claudeCode || agent.verified)
+                        engineCard(agent.engine, title: usable ? "Use \(agent.engine.displayName)" : agent.engine.displayName,
+                                   detail: usable ? agent.summary : (agent.isInstalled ? "Found but its signature could not be verified" : "Not installed"),
+                                   enabled: usable, installLink: agent.isInstalled ? nil : agent.engine)
                     }
-                    if agents.isEmpty {
-                        VStack(spacing: 4) {
-                            Text("No AI agent is installed.").font(.callout)
-                            HStack(spacing: 12) {
-                                Link("Claude Code", destination: URL(string: "https://claude.com/product/claude-code")!)
-                                Link("Codex CLI", destination: URL(string: "https://github.com/openai/codex")!)
-                                Link("Gemini CLI", destination: URL(string: "https://github.com/google-gemini/gemini-cli")!)
-                            }
-                            .font(.caption)
-                        }
-                        .padding(.bottom, 4)
-                    }
-                    engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true)
+                    engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true, installLink: nil)
                 }
             }
             .frame(maxWidth: 380)
@@ -155,16 +136,20 @@ struct OnboardingView: View {
         }
     }
 
-    private func engineCard(_ choice: EngineChoice, title: String, detail: String, enabled: Bool) -> some View {
+    private func engineCard(_ choice: EngineChoice, title: String, detail: String, enabled: Bool, installLink: EngineChoice?) -> some View {
         Button {
             if enabled { engineChoice = choice }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: engineChoice == choice ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(engineChoice == choice ? Color.accentColor : Color.secondary)
+                    .opacity(enabled ? 1 : 0.4)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.body.weight(.medium))
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(title).font(.body.weight(.medium)).opacity(enabled ? 1 : 0.6)
+                    HStack(spacing: 8) {
+                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        if let installLink { InstallLink(engine: installLink).font(.caption) }
+                    }
                 }
                 Spacer()
             }
@@ -173,7 +158,6 @@ struct OnboardingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .opacity(enabled ? 1 : 0.5)
     }
 
     // MARK: Footer
@@ -237,28 +221,12 @@ struct OnboardingView: View {
     // MARK: Actions
 
     private func detectAgents() async {
-        var found: [Agent] = []
-        if let path = ClaudeCodeAnalyst.locate() {
-            let trusted = await ClaudeCodeVerifier.isTrusted(path)
-            if trusted {
-                found.append(Agent(engine: .claudeCode, path: short(path), version: await ClaudeCodeAnalyst.version(of: path) ?? "found", verified: true))
-            }
-        }
-        if let path = CodexAnalyst.locate() {
-            found.append(Agent(engine: .codex, path: short(path), version: await CodexAnalyst.version(of: path) ?? "found", verified: false))
-        }
-        if let path = GeminiAnalyst.locate() {
-            found.append(Agent(engine: .gemini, path: short(path), version: await GeminiAnalyst.version(of: path) ?? "found", verified: false))
-        }
-        agents = found
+        agents = await AgentStatus.detectAll(settings: model.settings)
         detecting = false
-        if engineChoice == .none || !found.contains(where: { $0.engine == engineChoice }) {
-            engineChoice = found.first?.engine ?? .none
+        let usable = agents.filter { $0.isInstalled && ($0.engine != .claudeCode || $0.verified) }
+        if engineChoice == .none || !usable.contains(where: { $0.engine == engineChoice }) {
+            engineChoice = usable.first?.engine ?? .none
         }
-    }
-
-    private func short(_ path: String) -> String {
-        path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
     }
 
     private func pollAccessibility() async {

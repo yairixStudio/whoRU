@@ -31,11 +31,11 @@ private struct GeneralTab: View {
             Section {
                 Toggle("Launch at login", isOn: $model.settings.launchAtLogin)
                 Toggle("Show next to permission dialogs", isOn: $model.settings.showNextToDialogs)
-                if model.settings.engine != .none {
+                if model.settings.engine != .none, !model.settings.localOnly {
                     Toggle("Ask the AI automatically", isOn: $model.settings.askModelAutomatically)
                 }
             } footer: {
-                if model.settings.engine != .none {
+                if model.settings.engine != .none, !model.settings.localOnly {
                     Text("With automatic asking off, the panel shows the evidence and the deterministic verdict; the AI runs when you ask a question.")
                 }
             }
@@ -108,75 +108,128 @@ private struct PublisherList: View {
 
 // MARK: - AI
 
+/// What is known about an installed (or missing) agent, shared by Settings and onboarding.
+struct AgentStatus: Identifiable {
+    var engine: EngineChoice
+    var path: String?
+    var version: String?
+    var verified: Bool
+    var id: String { engine.rawValue }
+    var isInstalled: Bool { path != nil }
+
+    var summary: String {
+        guard let path else { return "Not installed" }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let short = path.replacingOccurrences(of: home, with: "~")
+        var parts = [version ?? "found"]
+        if engine == .claudeCode { parts.append(verified ? "verified" : "not verified") }
+        parts.append(short)
+        return parts.joined(separator: " · ")
+    }
+
+    static func detectAll(settings: WhoRUCore.Settings) async -> [AgentStatus] {
+        var result: [AgentStatus] = []
+        if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate() {
+            result.append(AgentStatus(engine: .claudeCode, path: path, version: await ClaudeCodeAnalyst.version(of: path), verified: await ClaudeCodeVerifier.isTrusted(path)))
+        } else {
+            result.append(AgentStatus(engine: .claudeCode, path: nil, version: nil, verified: false))
+        }
+        if let path = settings.codexPath ?? CodexAnalyst.locate() {
+            result.append(AgentStatus(engine: .codex, path: path, version: await CodexAnalyst.version(of: path), verified: true))
+        } else {
+            result.append(AgentStatus(engine: .codex, path: nil, version: nil, verified: false))
+        }
+        if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
+            result.append(AgentStatus(engine: .gemini, path: path, version: await GeminiAnalyst.version(of: path), verified: true))
+        } else {
+            result.append(AgentStatus(engine: .gemini, path: nil, version: nil, verified: false))
+        }
+        return result
+    }
+}
+
+/// The smallest possible install help: a link to the tool's page, and the one-line command on the clipboard.
+struct InstallLink: View {
+    let engine: EngineChoice
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let url = engine.installURL {
+                Link("Install…", destination: url)
+            }
+            if let command = engine.installCommand {
+                Button(copied ? "Copied" : "Copy command") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                    copied = true
+                }
+                .buttonStyle(.link)
+                .help(command)
+            }
+        }
+        .font(.callout)
+    }
+}
+
 /// Agents only: the tools people already have. No keys, no accounts.
 private struct AITab: View {
     @Bindable var model: AppModel
-    @State private var detected: [EngineChoice: String] = [:]
+    @State private var agents: [AgentStatus] = []
 
     private var engine: EngineChoice { model.settings.engine }
 
     var body: some View {
         Form {
-            Section {
-                Picker("AI agent", selection: $model.settings.engine) {
-                    ForEach([EngineChoice.auto, .claudeCode, .codex, .gemini, .none], id: \.self) { choice in
-                        Text(choice == .none ? "None" : choice.displayName).tag(choice)
+            if model.settings.localOnly {
+                Section {
+                    LabeledContent("AI agent", value: "Off")
+                } footer: {
+                    Text("Local-only mode is on (Privacy). Nothing leaves this Mac, so no agent runs. Evidence and the deterministic verdict still work.")
+                }
+            } else {
+                Section {
+                    Picker("AI agent", selection: $model.settings.engine) {
+                        ForEach([EngineChoice.auto, .claudeCode, .codex, .gemini, .none], id: \.self) { choice in
+                            Text(choice == .none ? "None" : choice.displayName).tag(choice)
+                        }
+                    }
+                    if EngineChoice.agents.contains(engine) {
+                        ModelPicker(engine: engine, settings: $model.settings)
+                    }
+                    if engine != .none {
+                        LabeledContent("Active", value: model.engineDescription)
+                    }
+                } footer: {
+                    switch engine {
+                    case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
+                    case .auto: Text("Automatic uses the first agent installed: Claude Code, Codex, Gemini. The agent explains the evidence and answers questions; it cannot override it.")
+                    default: Text("“Default” is the model the tool itself is configured with. The agent explains the evidence and answers questions; it cannot override it.")
                     }
                 }
+
                 if engine != .none {
-                    LabeledContent("Active", value: model.engineDescription)
-                }
-            } footer: {
-                switch engine {
-                case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
-                case .auto: Text("Automatic uses the first agent installed: Claude Code, Codex, Gemini. The agent explains the evidence and answers questions; it cannot override it.")
-                default: Text("The agent explains the evidence and answers questions; it cannot override it.")
-                }
-            }
-
-            if engine != .none {
-                Section("Installed") {
-                    LabeledContent("Claude Code", value: detected[.claudeCode] ?? "…")
-                    LabeledContent("Codex CLI", value: detected[.codex] ?? "…")
-                    LabeledContent("Gemini CLI", value: detected[.gemini] ?? "…")
-                }
-            }
-
-            if [.claudeCode, .codex, .gemini].contains(engine) {
-                Section {
-                    ModelPicker(engine: engine, settings: $model.settings)
-                } header: {
-                    Text("Model")
-                } footer: {
-                    Text("“Default” uses whatever the tool itself is configured with.")
+                    Section("Installed") {
+                        ForEach(agents) { agent in
+                            LabeledContent(agent.engine.displayName) {
+                                if agent.isInstalled {
+                                    Text(agent.summary).foregroundStyle(.secondary)
+                                } else {
+                                    HStack(spacing: 10) {
+                                        Text("Not installed").foregroundStyle(.secondary)
+                                        InstallLink(engine: agent.engine)
+                                    }
+                                }
+                            }
+                        }
+                        if agents.isEmpty { ProgressView().controlSize(.small) }
+                    }
                 }
             }
         }
         .formStyle(.grouped)
-        .task { await detect() }
+        .task { agents = await AgentStatus.detectAll(settings: model.settings) }
         .onChange(of: model.settings.engine) { _, _ in Task { await model.refreshEngineDescription() } }
-    }
-
-    private func detect() async {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        func short(_ path: String) -> String { path.replacingOccurrences(of: home, with: "~") }
-        if let path = model.settings.claudeCodePath ?? ClaudeCodeAnalyst.locate() {
-            let trusted = await ClaudeCodeVerifier.isTrusted(path)
-            let version = await ClaudeCodeAnalyst.version(of: path) ?? "?"
-            detected[.claudeCode] = "\(version) · \(trusted ? "verified" : "not verified") · \(short(path))"
-        } else {
-            detected[.claudeCode] = "Not installed"
-        }
-        if let path = model.settings.codexPath ?? CodexAnalyst.locate() {
-            detected[.codex] = "\(await CodexAnalyst.version(of: path) ?? "found") · \(short(path))"
-        } else {
-            detected[.codex] = "Not installed"
-        }
-        if let path = model.settings.geminiPath ?? GeminiAnalyst.locate() {
-            detected[.gemini] = "\(await GeminiAnalyst.version(of: path) ?? "found") · \(short(path))"
-        } else {
-            detected[.gemini] = "Not installed"
-        }
     }
 }
 
@@ -196,7 +249,7 @@ private struct ModelPicker: View {
             }
         )) {
             ForEach(engine.suggestedModels, id: \.self) { name in
-                Text(name.isEmpty ? "Default" : name).tag(name)
+                Text(engine.modelDisplayName(name)).tag(name)
             }
             Text("Custom…").tag("custom")
         }

@@ -85,8 +85,10 @@ private let subject = Subject(path: "/Applications/Thing.app", resolver: Resolve
 
     @Test func engineSuggestionsStartWithDefault() {
         #expect(EngineChoice.codex.suggestedModels.first == "")
-        #expect(EngineChoice.claudeCode.suggestedModels.contains("opus"))
+        #expect(EngineChoice.claudeCode.suggestedModels.contains("claude-fable-5-1"))
+        #expect(EngineChoice.claudeCode.modelDisplayName("") == "Default")
         #expect(EngineChoice.claudeAPI.suggestedModels.isEmpty)
+        #expect(EngineChoice.agents.allSatisfy { $0.installURL != nil && $0.installCommand != nil })
     }
 }
 
