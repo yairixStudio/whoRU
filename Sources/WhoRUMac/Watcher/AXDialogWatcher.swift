@@ -1,30 +1,45 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 import OSLog
 import WhoRUCore
 
 private let log = Logger(subsystem: WhoRUMac.bundleIdentifier, category: "watcher")
 
-/// Watches the process that draws permission dialogs and reports each new
-/// window's text and frame. Uses only the public Accessibility API: it reads,
-/// it never presses anything.
+/// Watches for permission dialogs and reports each new one's text and frame.
+///
+/// It does not depend on knowing which system process draws the dialog, which
+/// changes between macOS versions: the on-screen window list (no permission
+/// needed) reveals every new window with its owner, layer and bounds; small,
+/// alert-shaped windows are then read through the Accessibility API and kept
+/// only when their text parses as a permission prompt. Reads only; never
+/// presses anything.
 public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     public let events: AsyncStream<DialogEvent>
     private let continuation: AsyncStream<DialogEvent>.Continuation
 
-    /// Processes whose windows are permission dialogs. `UserNotificationCenter`
-    /// draws TCC prompts; the list is configurable for future macOS versions.
+    /// Processes known to draw permission prompts. Windows from these are
+    /// always inspected, whatever their size.
     public let bundleIdentifiers: Set<String>
     private let pollInterval: TimeInterval
+    private let parser = PromptParser()
 
-    private var observers: [pid_t: AXObserver] = [:]
-    private var knownWindows: [String: (element: AXUIElement, pid: pid_t)] = [:]
-    private var workspaceTokens: [NSObjectProtocol] = []
+    private struct Tracked {
+        var id: String
+        var pid: pid_t
+        var frame: Rect
+    }
+
+    private var tracked: [Int: Tracked] = [:]      // by window number
+    private var ignored: Set<Int> = []              // windows inspected and found not to be prompts
     private var pollTimer: Timer?
     private var started = false
+    private let ownPID = ProcessInfo.processInfo.processIdentifier
 
-    public init(bundleIdentifiers: Set<String> = ["com.apple.UserNotificationCenter"], pollInterval: TimeInterval = 0.3) {
+    static let ignoredOwners: Set<String> = ["Window Server", "Dock", "WindowManager", "Wallpaper", "Notification Center", "Control Center", "Spotlight", "SystemUIServer", "MenuBarAgent"]
+
+    public init(bundleIdentifiers: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.CoreServicesUIAgent", "com.apple.SecurityAgent"], pollInterval: TimeInterval = 0.15) {
         self.bundleIdentifiers = bundleIdentifiers
         self.pollInterval = pollInterval
         var cont: AsyncStream<DialogEvent>.Continuation!
@@ -36,141 +51,153 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
 
     // MARK: Lifecycle
 
-    /// Must be called on the main thread: observers attach to the main run loop.
+    /// Must be called on the main thread: the poll timer lives on the main run loop.
     public func start() throws {
         guard !started else { return }
         guard isAuthorized else { throw WatcherError.notAuthorized }
         dispatchPrecondition(condition: .onQueue(.main))
         started = true
-        let center = NSWorkspace.shared.notificationCenter
-        workspaceTokens.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            self?.consider(app)
-        })
-        workspaceTokens.append(center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
-            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            self?.detach(pid: app.processIdentifier)
-        })
-        for app in NSWorkspace.shared.runningApplications { consider(app) }
+        // Windows already on screen are not prompts we want to answer for; remember them.
+        for info in Self.onScreenWindows() { ignored.insert(info.number) }
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        log.info("polling the window list every \(Int(self.pollInterval * 1000), privacy: .public) ms")
     }
 
     public func stop() {
         started = false
         pollTimer?.invalidate()
         pollTimer = nil
-        for token in workspaceTokens { NSWorkspace.shared.notificationCenter.removeObserver(token) }
-        workspaceTokens.removeAll()
-        for pid in Array(observers.keys) { detach(pid: pid) }
-    }
-
-    // MARK: Attaching to the dialog process
-
-    private func consider(_ app: NSRunningApplication) {
-        guard let id = app.bundleIdentifier, bundleIdentifiers.contains(id) else { return }
-        attach(pid: app.processIdentifier)
-    }
-
-    private func attach(pid: pid_t) {
-        guard observers[pid] == nil else { return }
-        var observer: AXObserver?
-        let status = AXObserverCreate(pid, axCallback, &observer)
-        guard status == .success, let observer else {
-            log.error("could not observe pid \(pid, privacy: .public): AXError \(status.rawValue, privacy: .public)")
-            return
-        }
-        log.info("attached to pid \(pid, privacy: .public)")
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
-        let app = AXUIElementCreateApplication(pid)
-        AXObserverAddNotification(observer, app, kAXWindowCreatedNotification as CFString, refcon)
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
-        observers[pid] = observer
-        // Windows that already exist when we attach.
-        for window in windows(of: pid) { handleWindow(window, pid: pid) }
-    }
-
-    private func detach(pid: pid_t) {
-        guard let observer = observers.removeValue(forKey: pid) else { return }
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
-        for (id, entry) in knownWindows where entry.pid == pid {
-            knownWindows[id] = nil
-            continuation.yield(.closed(id: id))
+        for (number, entry) in tracked {
+            tracked[number] = nil
+            continuation.yield(.closed(id: entry.id))
         }
     }
 
-    // MARK: Windows
+    // MARK: Polling
 
-    fileprivate func handleNotification(_ name: String, element: AXUIElement) {
-        log.debug("AX notification \(name, privacy: .public)")
-        switch name {
-        case kAXWindowCreatedNotification:
-            if let pid = pid(of: element) { handleWindow(element, pid: pid) }
-        case kAXUIElementDestroyedNotification:
-            if let id = knownWindows.first(where: { CFEqual($0.value.element, element) })?.key {
-                knownWindows[id] = nil
-                continuation.yield(.closed(id: id))
-            }
-        case kAXMovedNotification, kAXResizedNotification:
-            if let id = knownWindows.first(where: { CFEqual($0.value.element, element) })?.key, let frame = frame(of: element) {
-                continuation.yield(.moved(id: id, frame: frame))
-            }
-        default:
-            break
-        }
+    struct WindowInfo {
+        var number: Int
+        var pid: pid_t
+        var owner: String
+        var layer: Int
+        var frame: Rect
     }
 
-    private func handleWindow(_ window: AXUIElement, pid: pid_t) {
-        guard !knownWindows.values.contains(where: { CFEqual($0.element, window) }) else { return }
-        guard let frame = frame(of: window) else { return }
-        let id = "\(pid)-\(CFHash(window))-\(Int(Date().timeIntervalSince1970 * 1000))"
-        knownWindows[id] = (window, pid)
-        if let observer = observers[pid] {
-            let refcon = Unmanaged.passUnretained(self).toOpaque()
-            AXObserverAddNotification(observer, window, kAXUIElementDestroyedNotification as CFString, refcon)
-            AXObserverAddNotification(observer, window, kAXMovedNotification as CFString, refcon)
-            AXObserverAddNotification(observer, window, kAXResizedNotification as CFString, refcon)
+    static func onScreenWindows() -> [WindowInfo] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return [] }
+        return list.compactMap { w in
+            guard let number = w[kCGWindowNumber as String] as? Int,
+                  let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+                  let bounds = w[kCGWindowBounds as String] as? [String: Any],
+                  let x = bounds["X"] as? Double, let y = bounds["Y"] as? Double,
+                  let width = bounds["Width"] as? Double, let height = bounds["Height"] as? Double else { return nil }
+            return WindowInfo(
+                number: number, pid: pid,
+                owner: w[kCGWindowOwnerName as String] as? String ?? "",
+                layer: w[kCGWindowLayer as String] as? Int ?? 0,
+                frame: Rect(x: x, y: y, width: width, height: height)
+            )
         }
-        let texts = staticTexts(in: window)
-        let buttons = buttonTitles(in: window)
-        let (title, body) = Self.pickTitleAndBody(texts)
-        log.info("window in pid \(pid, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, title \(title, privacy: .public)")
-        continuation.yield(.appeared(DialogInstance(id: id, pid: pid, frame: frame, title: title, body: body, buttons: buttons)))
     }
-
-    /// Polling fallback for the case where AX notifications are late or missing.
-    private var lastWindowCounts: [pid_t: Int] = [:]
 
     private func poll() {
-        for pid in observers.keys {
-            let current = windows(of: pid)
-            if lastWindowCounts[pid] != current.count {
-                lastWindowCounts[pid] = current.count
-                log.info("pid \(pid, privacy: .public) now has \(current.count, privacy: .public) AX windows")
+        let current = Self.onScreenWindows()
+        let currentNumbers = Set(current.map(\.number))
+
+        // Closed and moved.
+        for (number, entry) in tracked {
+            guard let info = current.first(where: { $0.number == number }) else {
+                tracked[number] = nil
+                log.info("window \(number, privacy: .public) gone")
+                continuation.yield(.closed(id: entry.id))
+                continue
             }
-            for window in current { handleWindow(window, pid: pid) }
-            for (id, entry) in knownWindows where entry.pid == pid {
-                if !current.contains(where: { CFEqual($0, entry.element) }) {
-                    knownWindows[id] = nil
-                    continuation.yield(.closed(id: id))
-                }
+            if info.frame != entry.frame {
+                tracked[number]?.frame = info.frame
+                continuation.yield(.moved(id: entry.id, frame: info.frame))
             }
         }
+        ignored = ignored.intersection(currentNumbers)
+
+        // New.
+        for info in current where tracked[info.number] == nil && !ignored.contains(info.number) {
+            guard info.pid != ownPID, !Self.ignoredOwners.contains(info.owner) else { ignored.insert(info.number); continue }
+            guard isCandidate(info) else { ignored.insert(info.number); continue }
+            inspect(info)
+        }
     }
+
+    /// Cheap pre-filter so only alert-shaped windows are read through AX.
+    private func isCandidate(_ info: WindowInfo) -> Bool {
+        if let bundle = NSRunningApplication(processIdentifier: info.pid)?.bundleIdentifier, bundleIdentifiers.contains(bundle) { return true }
+        if info.layer > 0 { return true }
+        return info.frame.width >= 200 && info.frame.width <= 760 && info.frame.height >= 80 && info.frame.height <= 640
+    }
+
+    private func inspect(_ info: WindowInfo) {
+        let started = Date()
+        guard let window = axWindow(pid: info.pid, matching: info.frame) else {
+            // Not exposed through AX (yet). Try again on the next poll a few times, then give up.
+            retries[info.number, default: 0] += 1
+            if retries[info.number, default: 0] > 6 {
+                ignored.insert(info.number)
+                retries[info.number] = nil
+                log.debug("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) has no AX window; ignoring")
+            }
+            return
+        }
+        retries[info.number] = nil
+        let texts = staticTexts(in: window)
+        guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
+            ignored.insert(info.number)
+            log.debug("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, not a prompt")
+            return
+        }
+        let title = texts[index]
+        let body = texts.dropFirst(index + 1).first
+        let buttons = buttonTitles(in: window)
+        let id = "\(info.pid)-\(info.number)"
+        tracked[info.number] = Tracked(id: id, pid: info.pid, frame: info.frame)
+        log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
+        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons)))
+    }
+
+    private var retries: [Int: Int] = [:]
 
     // MARK: AX helpers
 
-    private func windows(of pid: pid_t) -> [AXUIElement] {
+    /// The AX window of `pid` whose frame matches, or the element under the
+    /// window's centre as a fallback for processes that do not list windows.
+    private func axWindow(pid: pid_t, matching frame: Rect) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success else { return [] }
-        return (value as? [AXUIElement]) ?? []
-    }
-
-    private func pid(of element: AXUIElement) -> pid_t? {
-        var pid: pid_t = 0
-        return AXUIElementGetPid(element, &pid) == .success ? pid : nil
+        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success, let windows = value as? [AXUIElement] {
+            for window in windows {
+                if let f = self.frame(of: window), abs(f.x - frame.x) < 6, abs(f.y - frame.y) < 6, abs(f.width - frame.width) < 6 {
+                    return window
+                }
+            }
+            if windows.count == 1 { return windows[0] }
+        }
+        // Fallback: hit-test the middle of the window and walk up to its window element.
+        let systemWide = AXUIElementCreateSystemWide()
+        var hit: AXUIElement?
+        let point = CGPoint(x: frame.x + frame.width / 2, y: frame.y + 20)
+        guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success, var element = hit else { return nil }
+        var hops = 0
+        while hops < 12 {
+            hops += 1
+            let role = attribute(kAXRoleAttribute, of: element)
+            if role == kAXWindowRole || role == kAXSheetRole { return element }
+            var parent: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent else { break }
+            element = p as! AXUIElement
+        }
+        var owner: pid_t = 0
+        if AXUIElementGetPid(element, &owner) == .success, owner == pid { return element }
+        return nil
     }
 
     private func frame(of element: AXUIElement) -> Rect? {
@@ -197,44 +224,39 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         return (value as? [AXUIElement]) ?? []
     }
 
-    private func staticTexts(in element: AXUIElement, depth: Int = 0) -> [String] {
-        guard depth < 8 else { return [] }
+    private func staticTexts(in element: AXUIElement) -> [String] {
         var texts: [String] = []
-        if attribute(kAXRoleAttribute, of: element) == kAXStaticTextRole, let value = attribute(kAXValueAttribute, of: element), !value.isEmpty {
-            texts.append(value)
+        var budget = 400
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 10, budget > 0 else { return }
+            budget -= 1
+            let role = attribute(kAXRoleAttribute, of: node)
+            if role == kAXStaticTextRole, let value = attribute(kAXValueAttribute, of: node), !value.isEmpty {
+                texts.append(value)
+            }
+            for child in children(of: node) { walk(child, depth: depth + 1) }
         }
-        for child in children(of: element) { texts += staticTexts(in: child, depth: depth + 1) }
+        walk(element, depth: 0)
         return texts
     }
 
-    private func buttonTitles(in element: AXUIElement, depth: Int = 0) -> [String] {
-        guard depth < 8 else { return [] }
+    private func buttonTitles(in element: AXUIElement) -> [String] {
         var titles: [String] = []
-        if attribute(kAXRoleAttribute, of: element) == kAXButtonRole, let title = attribute(kAXTitleAttribute, of: element), !title.isEmpty {
-            titles.append(title)
+        var budget = 400
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 10, budget > 0 else { return }
+            budget -= 1
+            if attribute(kAXRoleAttribute, of: node) == kAXButtonRole, let title = attribute(kAXTitleAttribute, of: node), !title.isEmpty {
+                titles.append(title)
+            }
+            for child in children(of: node) { walk(child, depth: depth + 1) }
         }
-        for child in children(of: element) { titles += buttonTitles(in: child, depth: depth + 1) }
+        walk(element, depth: 0)
         return titles
-    }
-
-    /// The title is the text that names a requester; the body is the next one.
-    static func pickTitleAndBody(_ texts: [String]) -> (String, String?) {
-        let parser = PromptParser()
-        if let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) {
-            let body = texts.dropFirst(index + 1).first
-            return (texts[index], body)
-        }
-        return (texts.first ?? "", texts.dropFirst().first)
     }
 }
 
 public enum WatcherError: Error, CustomStringConvertible {
     case notAuthorized
     public var description: String { "Accessibility permission not granted" }
-}
-
-private func axCallback(observer: AXObserver, element: AXUIElement, notification: CFString, refcon: UnsafeMutableRawPointer?) {
-    guard let refcon else { return }
-    let watcher = Unmanaged<AXDialogWatcher>.fromOpaque(refcon).takeUnretainedValue()
-    watcher.handleNotification(notification as String, element: element)
 }
