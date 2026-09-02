@@ -154,7 +154,7 @@ One `Analyst` protocol, three implementations. First run picks Claude Code if in
 | Engine | How | Pros | Cons |
 |---|---|---|---|
 | Claude API (fastest) | `POST /v1/messages` from URLSession with streaming and tool use; thin hand-written layer | About a second to first token, full control of tools and output format, transparent cost | Needs an API key; all tools implemented in-app |
-| Claude Code headless (zero setup) | `claude -p` child process with JSON output, `--resume` for chat | Uses an existing subscription; gets a read-only Bash allowlist so it can run checks we did not foresee | Slower startup, depends on the installed CLI |
+| Claude Code headless (zero setup) | `claude -p` child process with JSON output, `--resume` for chat | Uses an existing subscription; gets a metadata-only Bash allowlist (codesign, spctl, shasum, mdls, xattr, ps, lsof, plutil, stat, file, otool) so it can run checks we did not foresee. Reading, listing and writing tools are explicitly disallowed and the process runs in an empty scratch directory: anything it touches is attributed to whoRU by macOS, and the first live run showed it reaching for the Desktop folder | Slower startup (about a minute for a verdict), depends on the installed CLI |
 | Local model (later) | Ollama or similar on localhost | Zero network egress | Lower quality, no reliable tools |
 
 ### 9.2 Models
