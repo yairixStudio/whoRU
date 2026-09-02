@@ -148,27 +148,17 @@ struct AgentStatus: Identifiable {
     }
 }
 
-/// The smallest possible install help: a link to the tool's page, and the one-line command on the clipboard.
+/// One button: opens Terminal with the tool's install script. The script
+/// itself says where to look if it fails.
 struct InstallLink: View {
     let engine: EngineChoice
-    @State private var copied = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            if let url = engine.installURL {
-                Link("Install…", destination: url)
-            }
-            if let command = engine.installCommand {
-                Button(copied ? "Copied" : "Copy command") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(command, forType: .string)
-                    copied = true
-                }
-                .buttonStyle(.link)
-                .help(command)
-            }
+        Button("Install") {
+            try? AgentInstaller.install(engine)
         }
-        .font(.callout)
+        .controlSize(.small)
+        .help(engine.installCommand ?? "")
     }
 }
 
@@ -230,6 +220,14 @@ private struct AITab: View {
         .formStyle(.grouped)
         .task { agents = await AgentStatus.detectAll(settings: model.settings) }
         .onChange(of: model.settings.engine) { _, _ in Task { await model.refreshEngineDescription() } }
+        // Coming back from Terminal after an install: look again.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task {
+                agents = await AgentStatus.detectAll(settings: model.settings)
+                model.settings = model.settings
+                await model.refreshEngineDescription()
+            }
+        }
     }
 }
 

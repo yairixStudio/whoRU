@@ -32,6 +32,9 @@ struct OnboardingView: View {
         .background(.background)
         .task { await detectAgents() }
         .task { await pollAccessibility() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if step == .ai { Task { await detectAgents() } }
+        }
         .onAppear {
             if !MoveToApplications.isNeeded { step = AccessibilityPermission.isGranted ? .ai : .accessibility }
             engineChoice = model.settings.engine == .auto ? .none : model.settings.engine
@@ -148,7 +151,7 @@ struct OnboardingView: View {
                     Text(title).font(.body.weight(.medium)).opacity(enabled ? 1 : 0.6)
                     HStack(spacing: 8) {
                         Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        if let installLink { InstallLink(engine: installLink).font(.caption) }
+                        if let installLink { InstallLink(engine: installLink) }
                     }
                 }
                 Spacer()

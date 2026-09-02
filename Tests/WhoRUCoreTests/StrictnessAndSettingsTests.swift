@@ -89,6 +89,13 @@ private let subject = Subject(path: "/Applications/Thing.app", resolver: Resolve
         #expect(EngineChoice.claudeCode.modelDisplayName("") == "Default")
         #expect(EngineChoice.claudeAPI.suggestedModels.isEmpty)
         #expect(EngineChoice.agents.allSatisfy { $0.installURL != nil && $0.installCommand != nil })
+        for agent in EngineChoice.agents {
+            let script = agent.installScript ?? ""
+            #expect(script.hasPrefix("#!/bin/sh"))
+            #expect(script.contains(agent.installURL!.absoluteString))
+            #expect(script.contains("Done."))
+        }
+        #expect(EngineChoice.none.installScript == nil)
     }
 }
 

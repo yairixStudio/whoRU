@@ -57,9 +57,62 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     public var installCommand: String? {
         switch self {
         case .claudeCode: "curl -fsSL https://claude.ai/install.sh | bash"
-        case .codex: "npm install -g @openai/codex"
-        case .gemini: "npm install -g @google/gemini-cli"
+        case .codex: "brew install codex"
+        case .gemini: "brew install gemini-cli"
         default: nil
+        }
+    }
+
+    /// A complete shell script that installs the tool the most reliable way
+    /// available on the machine, and says where to look if it fails. The app
+    /// runs it in Terminal so the user sees exactly what happens.
+    public var installScript: String? {
+        guard let url = installURL?.absoluteString else { return nil }
+        let name = displayName
+        let header = """
+        #!/bin/sh
+        # whoRU: install \(name)
+        # If this does not work, see \(url)
+        printf '\\n\\033[1mwhoRU → installing \(name)\\033[0m\\n'
+        printf 'If this fails, see: \(url)\\n\\n'
+
+        """
+        let footer = """
+
+        status=$?
+        printf '\\n'
+        if [ $status -eq 0 ]; then
+          printf '\\033[1mDone.\\033[0m Back in whoRU, pick \(name) (or Automatic) under Settings → AI.\\n'
+        else
+          printf '\\033[1mThe install did not finish (exit %s).\\033[0m See \(url)\\n' "$status"
+        fi
+        printf 'You can close this window.\\n'
+        """
+        switch self {
+        case .claudeCode:
+            return header + "curl -fsSL https://claude.ai/install.sh | bash" + footer
+        case .codex:
+            return header + """
+            if command -v brew >/dev/null 2>&1; then
+              brew install codex
+            elif command -v npm >/dev/null 2>&1; then
+              npm install -g @openai/codex
+            else
+              printf 'Neither Homebrew nor Node.js is installed. Install Homebrew from https://brew.sh and run this again.\\n'; false
+            fi
+            """ + footer
+        case .gemini:
+            return header + """
+            if command -v brew >/dev/null 2>&1; then
+              brew install gemini-cli
+            elif command -v npm >/dev/null 2>&1; then
+              npm install -g @google/gemini-cli
+            else
+              printf 'Neither Homebrew nor Node.js is installed. Install Homebrew from https://brew.sh and run this again.\\n'; false
+            fi
+            """ + footer
+        default:
+            return nil
         }
     }
 
