@@ -28,21 +28,18 @@ public enum MacEnvironment {
     }
 
     /// Picks the engine from settings and what is available on the machine.
+    /// An explicit choice that is not available (key removed, tool
+    /// uninstalled) falls back to automatic detection rather than to nothing.
     public static func analyst(settings: Settings, secrets: any SecretStore) async -> (any Analyst)? {
+        if settings.engine != .auto, settings.engine != .none, let explicit = explicitAnalyst(settings: settings, secrets: secrets) {
+            return explicit
+        }
         switch settings.engine {
         case .none:
             return nil
-        case .claudeAPI:
-            return secrets.secret(.anthropicAPIKey).map { ClaudeAPIAnalyst(apiKey: $0, hardTimeout: .seconds(settings.hardTimeoutSeconds)) }
-        case .claudeCode:
-            return (settings.claudeCodePath ?? ClaudeCodeAnalyst.locate()).map { ClaudeCodeAnalyst(executable: $0, model: settings.model(for: .claudeCode)) }
-        case .codex:
-            return (settings.codexPath ?? CodexAnalyst.locate()).map { CodexAnalyst(executable: $0, model: settings.model(for: .codex)) }
-        case .gemini:
-            return (settings.geminiPath ?? GeminiAnalyst.locate()).map { GeminiAnalyst(executable: $0, model: settings.model(for: .gemini)) }
         case .local:
-            return URL(string: settings.localModelURL).map { LocalModelAnalyst(baseURL: $0, model: settings.localModelName) }
-        case .auto:
+            return nil
+        default:
             if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate(), await ClaudeCodeVerifier.isTrusted(path) {
                 return ClaudeCodeAnalyst(executable: path, model: settings.model(for: .claudeCode))
             }
@@ -55,6 +52,23 @@ public enum MacEnvironment {
             if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
                 return GeminiAnalyst(executable: path, model: settings.model(for: .gemini))
             }
+            return nil
+        }
+    }
+
+    private static func explicitAnalyst(settings: Settings, secrets: any SecretStore) -> (any Analyst)? {
+        switch settings.engine {
+        case .claudeAPI:
+            return secrets.secret(.anthropicAPIKey).map { ClaudeAPIAnalyst(apiKey: $0, hardTimeout: .seconds(settings.hardTimeoutSeconds)) }
+        case .claudeCode:
+            return (settings.claudeCodePath ?? ClaudeCodeAnalyst.locate()).map { ClaudeCodeAnalyst(executable: $0, model: settings.model(for: .claudeCode)) }
+        case .codex:
+            return (settings.codexPath ?? CodexAnalyst.locate()).map { CodexAnalyst(executable: $0, model: settings.model(for: .codex)) }
+        case .gemini:
+            return (settings.geminiPath ?? GeminiAnalyst.locate()).map { GeminiAnalyst(executable: $0, model: settings.model(for: .gemini)) }
+        case .local:
+            return URL(string: settings.localModelURL).map { LocalModelAnalyst(baseURL: $0, model: settings.localModelName) }
+        case .auto, .none:
             return nil
         }
     }
