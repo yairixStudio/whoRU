@@ -157,9 +157,10 @@ One `Analyst` protocol, three implementations. First run picks Claude Code if in
 | Claude Code headless (zero setup) | `claude -p` child process with JSON output, `--resume` for chat | Uses an existing subscription; gets a metadata-only Bash allowlist (codesign, spctl, shasum, mdls, xattr, ps, lsof, plutil, stat, file, otool) so it can run checks we did not foresee. Reading, listing and writing tools are explicitly disallowed and the process runs in an empty scratch directory: anything it touches is attributed to whoRU by macOS, and the first live run showed it reaching for the Desktop folder | Slower startup (about a minute for a verdict), depends on the installed CLI |
 | Codex CLI | `codex exec` with a read-only sandbox, no session files, the answer written to a file | Uses an existing OpenAI subscription; no key in whoRU | No tools (answers from the bundle only); follow-up questions resend the transcript |
 | Gemini CLI | `gemini -p` | Uses an existing Google account | Same limits as Codex; untested on a live machine so far |
-| Local model | Ollama or similar on localhost | Zero network egress | Lower quality, no reliable tools |
+| Apple Intelligence | Apple's on-device foundation model through the FoundationModels framework, guided generation into the verdict shape | Nothing leaves the Mac, no install, no account; allowed in local-only mode | Small context (the bundle is summarized), shorter and simpler answers, no tools |
+| Local model (command line only) | Ollama or similar on localhost | Zero network egress | Lower quality, no reliable tools |
 
-Automatic order: Claude Code (if its signature verifies), an API key, Codex, Gemini, none. Each command-line engine has a model picker whose first entry is the CLI's own default.
+The app offers only agents that can be used right now (installed, or available for Apple Intelligence); a missing one gets an Install button that opens Terminal with the most reliable install script and the tool's page in case it fails. Automatic (first run) resolves to Claude Code if its signature verifies, else Codex, Gemini, Apple Intelligence, an API key, none. Each agent has concrete models; a fresh choice takes the first one. There is no unnamed default.
 
 ### 9.2 Models
 
