@@ -128,7 +128,7 @@ struct OnboardingView: View {
                     ForEach(agents) { agent in
                         agentRow(agent)
                     }
-                    choiceRow(.none, title: "No AI for now", detail: "Evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true, action: nil)
+                    choiceRow(.none, title: "No AI for now", detail: "Evidence and a deterministic verdict. Nothing is sent anywhere.", enabled: true, action: nil)
                 }
             }
             .frame(maxWidth: 380)
