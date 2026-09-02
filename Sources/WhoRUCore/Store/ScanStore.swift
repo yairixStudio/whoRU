@@ -199,6 +199,7 @@ public actor JSONFileScanStore: ScanStore {
             summary.lastSeen = last.startedAt
             summary.lastVerdict = last.verdict?.verdict
             summary.publisherName = last.evidence.first { $0.key == .publisher }?.facts[Fact.publisherName]
+                ?? last.evidence.first { $0.key == .signerIdentity }?.facts[Fact.signerName]
         }
         if let sha256 {
             let same = matches.filter { $0.sha256 == sha256 }
