@@ -128,6 +128,8 @@ final class AppModel {
             case "local": engineDescription = "Local model · \(settings.localModelName)"
             default: engineDescription = analyst.id
             }
+        } else if settings.localOnly {
+            engineDescription = "Evidence only · local-only mode"
         } else {
             engineDescription = settings.engine == .none ? "Evidence only, no AI" : "Evidence only · no AI agent found"
         }

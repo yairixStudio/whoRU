@@ -31,11 +31,11 @@ private struct GeneralTab: View {
             Section {
                 Toggle("Launch at login", isOn: $model.settings.launchAtLogin)
                 Toggle("Show next to permission dialogs", isOn: $model.settings.showNextToDialogs)
-                if model.settings.engine != .none, !model.settings.localOnly {
+                if model.settings.engine != .none {
                     Toggle("Ask the AI automatically", isOn: $model.settings.askModelAutomatically)
                 }
             } footer: {
-                if model.settings.engine != .none, !model.settings.localOnly {
+                if model.settings.engine != .none {
                     Text("With automatic asking off, the panel shows the evidence and the deterministic verdict; the AI runs when you ask a question.")
                 }
             }
@@ -187,45 +187,44 @@ private struct AITab: View {
 
     var body: some View {
         Form {
-            if model.settings.localOnly {
-                Section {
-                    LabeledContent("AI agent", value: "Off")
-                } footer: {
-                    Text("Local-only mode is on (Privacy). Nothing leaves this Mac, so no agent runs. Evidence and the deterministic verdict still work.")
+            Section {
+                // Only what can actually be used right now is offered. In
+                // local-only mode that is Apple's on-device model, or nothing.
+                Picker("AI agent", selection: $model.settings.engine) {
+                    ForEach(usableAgents, id: \.self) { choice in
+                        Text(choice.displayName).tag(choice)
+                    }
+                    Text("None").tag(EngineChoice.none)
                 }
-            } else {
-                Section {
-                    // Only what can actually be used right now is offered.
-                    Picker("AI agent", selection: $model.settings.engine) {
-                        ForEach(usableAgents, id: \.self) { choice in
-                            Text(choice.displayName).tag(choice)
-                        }
-                        Text("None").tag(EngineChoice.none)
-                    }
-                    if engine == .appleIntelligence {
-                        LabeledContent("Model", value: "On-device model")
-                    } else if EngineChoice.commandLineAgents.contains(engine) {
-                        ModelPicker(engine: engine, settings: $model.settings)
-                    }
-                } footer: {
+                if engine == .appleIntelligence {
+                    LabeledContent("Model", value: "On-device model")
+                } else if EngineChoice.commandLineAgents.contains(engine) {
+                    ModelPicker(engine: engine, settings: $model.settings)
+                }
+            } footer: {
+                if model.settings.localOnly {
+                    Text(AppleFoundationAnalyst.isAvailable
+                         ? "Local-only mode is on (Privacy), so only Apple’s on-device model is offered. Nothing leaves this Mac. Cloud agents come back when you turn local-only mode off."
+                         : "Local-only mode is on (Privacy), so only an on-device model could run, and Apple Intelligence is not available on this Mac right now. Evidence and the deterministic verdict still work.")
+                } else {
                     switch engine {
                     case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
-                    case .appleIntelligence: Text("Apple's on-device model explains the evidence without anything leaving this Mac. Smaller than the cloud agents, so expect shorter answers.")
+                    case .appleIntelligence: Text("Apple’s on-device model explains the evidence without anything leaving this Mac. Smaller than the cloud agents, so expect shorter answers.")
                     default: Text("The agent explains the evidence and answers questions; it cannot override it.")
                     }
                 }
+            }
 
-                Section("Agents on this Mac") {
-                    ForEach(agents) { agent in
-                        LabeledContent(agent.engine.displayName) {
-                            HStack(spacing: 10) {
-                                Text(agent.summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                                if !agent.isUsable { InstallLink(engine: agent.engine) }
-                            }
+            Section(model.settings.localOnly ? "On-device" : "Agents on this Mac") {
+                ForEach(visibleAgents) { agent in
+                    LabeledContent(agent.engine.displayName) {
+                        HStack(spacing: 10) {
+                            Text(agent.summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            if !agent.isUsable { InstallLink(engine: agent.engine) }
                         }
                     }
-                    if agents.isEmpty { ProgressView().controlSize(.small) }
                 }
+                if agents.isEmpty { ProgressView().controlSize(.small) }
             }
         }
         .formStyle(.grouped)
@@ -237,10 +236,15 @@ private struct AITab: View {
         }
     }
 
+    /// In local-only mode only on-device agents are listed at all.
+    private var visibleAgents: [AgentStatus] {
+        model.settings.localOnly ? agents.filter(\.engine.isOnDevice) : agents
+    }
+
     private var usableAgents: [EngineChoice] {
-        let usable = agents.filter(\.isUsable).map(\.engine)
+        let usable = visibleAgents.filter(\.isUsable).map(\.engine)
         // Keep the current choice visible even if it just became unavailable, so the picker stays consistent.
-        if EngineChoice.agents.contains(engine), !usable.contains(engine) { return usable + [engine] }
+        if EngineChoice.agents.contains(engine), !usable.contains(engine), !(model.settings.localOnly && !engine.isOnDevice) { return usable + [engine] }
         return usable
     }
 
@@ -248,7 +252,11 @@ private struct AITab: View {
         agents = await AgentStatus.detectAll(settings: model.settings)
         // "Automatic" is how the app starts; the picker shows a concrete agent.
         if model.settings.engine == .auto {
-            model.settings.engine = agents.first(where: \.isUsable)?.engine ?? .none
+            model.settings.engine = visibleAgents.first(where: \.isUsable)?.engine ?? .none
+        }
+        // A cloud agent cannot stay selected once local-only mode is on.
+        if model.settings.localOnly, !model.settings.engine.isOnDevice, model.settings.engine != .none {
+            model.settings.engine = AppleFoundationAnalyst.isAvailable ? .appleIntelligence : .none
         }
         await model.refreshEngineDescription()
     }
@@ -294,8 +302,17 @@ private struct PrivacyTab: View {
         Form {
             Section {
                 Toggle("Local-only mode", isOn: $model.settings.localOnly)
+                    .onChange(of: model.settings.localOnly) { _, on in
+                        // Cloud agents are off the table; Apple's on-device model stays, if there is one.
+                        if on, !model.settings.engine.isOnDevice, model.settings.engine != .none {
+                            model.settings.engine = AppleFoundationAnalyst.isAvailable ? .appleIntelligence : .none
+                        }
+                        Task { await model.refreshEngineDescription() }
+                    }
             } footer: {
-                Text("Turns off every network request, including cloud AI and official release manifests. Evidence and the deterministic verdict still work.")
+                Text(model.settings.localOnly
+                     ? "On: no network requests at all, no cloud agents, no official release manifests. Under AI, only Apple’s on-device model is offered."
+                     : "Turns off every network request, including cloud AI and official release manifests. Evidence and the deterministic verdict still work; Apple’s on-device model remains available.")
             }
             Section("VirusTotal") {
                 Toggle("Look hashes up on VirusTotal", isOn: $model.settings.virusTotalEnabled)

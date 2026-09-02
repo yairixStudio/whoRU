@@ -31,6 +31,14 @@ public enum MacEnvironment {
     /// An explicit choice that is not available (key removed, tool
     /// uninstalled) falls back to automatic detection rather than to nothing.
     public static func analyst(settings: Settings, secrets: any SecretStore) async -> (any Analyst)? {
+        // Local-only mode: nothing that talks to a server, whatever the engine setting says.
+        if settings.localOnly {
+            switch settings.engine {
+            case .none: return nil
+            case .local: return explicitAnalyst(settings: settings, secrets: secrets)
+            default: return AppleFoundationAnalyst.isAvailable ? AppleFoundationAnalyst() : nil
+            }
+        }
         if settings.engine != .auto, settings.engine != .none, let explicit = explicitAnalyst(settings: settings, secrets: secrets) {
             return explicit
         }
