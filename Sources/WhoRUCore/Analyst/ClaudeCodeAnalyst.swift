@@ -96,10 +96,13 @@ public struct ClaudeCodeAnalyst: Analyst {
     public func reply(to question: String, session: AnalystSession, request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> ChatReply {
         guard let sessionID = session.payload["session_id"]?.stringValue else { throw AnalystError.notConfigured("no Claude Code session to resume") }
         onEvent(.started(model: request.model))
+        // The system prompt is not part of the resumed session; without it the
+        // CLI falls back to its coding-assistant persona.
         let output = try await run([
             "-p", question,
             "--resume", sessionID,
             "--output-format", "json",
+            "--append-system-prompt", AnalystPrompt.systemPrompt + "\n\n" + AnalystPrompt.chatSystemAddendum(),
             "--allowedTools", Self.allowedTools.joined(separator: ","),
             "--disallowedTools", Self.disallowedTools.joined(separator: ","),
             "--permission-mode", "default",
