@@ -1,12 +1,14 @@
 import Foundation
 
 public enum EngineChoice: String, Codable, Sendable, CaseIterable {
-    /// Whatever is present: Claude Code, an API key, Codex, Gemini, else none.
+    /// Whatever is present: Claude Code, Codex, Gemini, Apple's on-device model, an API key, else none.
     case auto
     case claudeAPI
     case claudeCode
     case codex
     case gemini
+    /// Apple's on-device foundation model (Apple Intelligence). Never leaves the Mac.
+    case appleIntelligence
     case local
     case none
 
@@ -17,32 +19,44 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
         case .claudeCode: "Claude Code"
         case .codex: "Codex CLI"
         case .gemini: "Gemini CLI"
+        case .appleIntelligence: "Apple Intelligence"
         case .local: "Local model"
         case .none: "None"
         }
     }
 
-    /// Models offered in the picker for command-line engines. Empty string is the CLI's own default.
+    /// Models offered in the picker. The first one is what a fresh choice of
+    /// this agent uses; there is no unnamed default.
     public var suggestedModels: [String] {
         switch self {
-        case .claudeCode: ["", "claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]
-        case .codex: ["", "gpt-5", "gpt-5-codex", "o3"]
-        case .gemini: ["", "gemini-2.5-pro", "gemini-2.5-flash"]
+        case .claudeCode: ["claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"]
+        case .codex: ["gpt-5-codex", "gpt-5"]
+        case .gemini: ["gemini-2.5-pro", "gemini-2.5-flash"]
+        case .appleIntelligence: ["on-device"]
         default: []
         }
     }
 
+    public var defaultModel: String { suggestedModels.first ?? "" }
+
     /// Human name for a model id in the picker.
     public func modelDisplayName(_ id: String) -> String {
         switch id {
-        case "": "Default"
         case "claude-fable-5-1": "Claude Fable 5.1"
         case "claude-opus-5": "Claude Opus 5"
         case "claude-sonnet-5": "Claude Sonnet 5"
         case "claude-haiku-4-5": "Claude Haiku 4.5"
+        case "gpt-5-codex": "GPT-5 Codex"
+        case "gpt-5": "GPT-5"
+        case "gemini-2.5-pro": "Gemini 2.5 Pro"
+        case "gemini-2.5-flash": "Gemini 2.5 Flash"
+        case "on-device": "On-device model"
         default: id
         }
     }
+
+    /// Engines that run entirely on this Mac and are allowed in local-only mode.
+    public var isOnDevice: Bool { self == .appleIntelligence || self == .local }
 
     /// Where to get the tool. The minimum: a page and a one-line install.
     public var installURL: URL? {
@@ -116,7 +130,10 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    public static let agents: [EngineChoice] = [.claudeCode, .codex, .gemini]
+    public static let agents: [EngineChoice] = [.claudeCode, .codex, .gemini, .appleIntelligence]
+
+    /// Engines that are installed as command-line tools.
+    public static let commandLineAgents: [EngineChoice] = [.claudeCode, .codex, .gemini]
 }
 
 /// How hard the evidence has to work before something is green.
@@ -174,7 +191,11 @@ public struct Settings: Codable, Sendable, Hashable {
     public var localModelURL: String = "http://localhost:11434"
     public var localModelName: String = "llama3"
 
-    public func model(for engine: EngineChoice) -> String { engineModels[engine.rawValue] ?? "" }
+    /// The chosen model for an engine, or that engine's first suggestion.
+    public func model(for engine: EngineChoice) -> String {
+        let chosen = engineModels[engine.rawValue] ?? ""
+        return chosen.isEmpty || chosen == "custom" ? engine.defaultModel : chosen
+    }
 
     // Privacy
     public var localOnly = false

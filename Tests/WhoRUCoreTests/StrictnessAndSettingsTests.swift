@@ -73,7 +73,7 @@ private let subject = Subject(path: "/Applications/Thing.app", resolver: Resolve
         #expect(settings.historyRetentionDays == 7)
         #expect(settings.strictness == .standard)
         #expect(settings.engineModels.isEmpty)
-        #expect(settings.model(for: .codex) == "")
+        #expect(settings.model(for: .codex) == EngineChoice.codex.defaultModel)
     }
 
     @Test func unknownEngineValueFallsBackToDefaults() throws {
@@ -84,12 +84,19 @@ private let subject = Subject(path: "/Applications/Thing.app", resolver: Resolve
     }
 
     @Test func engineSuggestionsStartWithDefault() {
-        #expect(EngineChoice.codex.suggestedModels.first == "")
+        #expect(EngineChoice.codex.defaultModel == "gpt-5-codex")
         #expect(EngineChoice.claudeCode.suggestedModels.contains("claude-fable-5-1"))
-        #expect(EngineChoice.claudeCode.modelDisplayName("") == "Default")
+        #expect(EngineChoice.claudeCode.modelDisplayName("claude-opus-5") == "Claude Opus 5")
         #expect(EngineChoice.claudeAPI.suggestedModels.isEmpty)
-        #expect(EngineChoice.agents.allSatisfy { $0.installURL != nil && $0.installCommand != nil })
-        for agent in EngineChoice.agents {
+        #expect(EngineChoice.appleIntelligence.isOnDevice)
+        var settings = Settings()
+        #expect(settings.model(for: .claudeCode) == "claude-opus-5")
+        settings.engineModels["claudeCode"] = "custom"
+        #expect(settings.model(for: .claudeCode) == "claude-opus-5")
+        settings.engineModels["claudeCode"] = "claude-sonnet-5"
+        #expect(settings.model(for: .claudeCode) == "claude-sonnet-5")
+        #expect(EngineChoice.commandLineAgents.allSatisfy { $0.installURL != nil && $0.installCommand != nil })
+        for agent in EngineChoice.commandLineAgents {
             let script = agent.installScript ?? ""
             #expect(script.hasPrefix("#!/bin/sh"))
             #expect(script.contains(agent.installURL!.absoluteString))

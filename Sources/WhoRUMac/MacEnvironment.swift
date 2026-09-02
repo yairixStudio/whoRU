@@ -39,6 +39,9 @@ public enum MacEnvironment {
             return nil
         case .local:
             return nil
+        case .appleIntelligence:
+            // Chosen explicitly but unavailable right now (model downloading): do not silently switch to a cloud agent.
+            return nil
         default:
             // Agents first: they need no key. An API key is used only if it was set up on the command line.
             if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate(), await ClaudeCodeVerifier.isTrusted(path) {
@@ -49,6 +52,9 @@ public enum MacEnvironment {
             }
             if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
                 return GeminiAnalyst(executable: path, model: settings.model(for: .gemini))
+            }
+            if AppleFoundationAnalyst.isAvailable {
+                return AppleFoundationAnalyst()
             }
             if let key = secrets.secret(.anthropicAPIKey) {
                 return ClaudeAPIAnalyst(apiKey: key, hardTimeout: .seconds(settings.hardTimeoutSeconds))
@@ -67,6 +73,8 @@ public enum MacEnvironment {
             return (settings.codexPath ?? CodexAnalyst.locate()).map { CodexAnalyst(executable: $0, model: settings.model(for: .codex)) }
         case .gemini:
             return (settings.geminiPath ?? GeminiAnalyst.locate()).map { GeminiAnalyst(executable: $0, model: settings.model(for: .gemini)) }
+        case .appleIntelligence:
+            return AppleFoundationAnalyst.isAvailable ? AppleFoundationAnalyst() : nil
         case .local:
             return URL(string: settings.localModelURL).map { LocalModelAnalyst(baseURL: $0, model: settings.localModelName) }
         case .auto, .none:

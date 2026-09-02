@@ -126,10 +126,10 @@ struct OnboardingView: View {
                     ProgressView().controlSize(.small)
                 } else {
                     ForEach(agents) { agent in
-                        let usable = agent.isInstalled && (agent.engine != .claudeCode || agent.verified)
+                        let usable = agent.isUsable
                         engineCard(agent.engine, title: usable ? "Use \(agent.engine.displayName)" : agent.engine.displayName,
-                                   detail: usable ? agent.summary : (agent.isInstalled ? "Found but its signature could not be verified" : "Not installed"),
-                                   enabled: usable, installLink: agent.isInstalled ? nil : agent.engine)
+                                   detail: usable ? agent.summary : (agent.isInstalled ? "Found but its signature could not be verified" : agent.summary),
+                                   enabled: usable, installLink: usable ? nil : agent.engine)
                     }
                     engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true, installLink: nil)
                 }
@@ -226,7 +226,7 @@ struct OnboardingView: View {
     private func detectAgents() async {
         agents = await AgentStatus.detectAll(settings: model.settings)
         detecting = false
-        let usable = agents.filter { $0.isInstalled && ($0.engine != .claudeCode || $0.verified) }
+        let usable = agents.filter(\.isUsable)
         if engineChoice == .none || !usable.contains(where: { $0.engine == engineChoice }) {
             engineChoice = usable.first?.engine ?? .none
         }

@@ -149,7 +149,7 @@ public struct ScanPipeline: Sendable {
             return await finish(record, onEvent: onEvent)
         }
         guard let analyst = env.analyst else { return await skip("no AI engine configured") }
-        if env.settings.localOnly, analyst.id != "local" { return await skip("local-only mode") }
+        if env.settings.localOnly, analyst.id != "local", analyst.id != "apple" { return await skip("local-only mode") }
         if hard.canSkipModel { return await skip(hard.isSystemComponent ? "system component signed by Apple" : "trusted publisher") }
         if let store = env.store, let spend = try? await store.monthlySpend(), spend >= env.settings.monthlyBudgetUSD, analyst.id == "claude-api" {
             return await skip("monthly budget reached")

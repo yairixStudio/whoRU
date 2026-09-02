@@ -226,6 +226,7 @@ struct CLI {
         } else {
             print("gemini cli:      not found")
         }
+        print("apple intel.:    \(AppleFoundationAnalyst.unavailabilityReason() ?? "available (on-device)")")
         print("api key:         \(secrets.secret(.anthropicAPIKey) != nil ? "present" : "none")")
         print("virustotal key:  \(secrets.secret(.virusTotalAPIKey) != nil ? "present" : "none")")
         let analyst = await MacEnvironment.analyst(settings: settings, secrets: secrets)

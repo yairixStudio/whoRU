@@ -114,10 +114,22 @@ struct AgentStatus: Identifiable {
     var path: String?
     var version: String?
     var verified: Bool
+    /// For agents that are not a file on disk (Apple Intelligence): why it cannot be used, if it cannot.
+    var unavailableReason: String?
     var id: String { engine.rawValue }
+
     var isInstalled: Bool { path != nil }
+    /// Can be chosen right now.
+    var isUsable: Bool {
+        switch engine {
+        case .appleIntelligence: unavailableReason == nil
+        case .claudeCode: isInstalled && verified
+        default: isInstalled
+        }
+    }
 
     var summary: String {
+        if engine == .appleIntelligence { return unavailableReason ?? "On-device · nothing leaves this Mac" }
         guard let path else { return "Not installed" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = path.replacingOccurrences(of: home, with: "~")
@@ -144,21 +156,25 @@ struct AgentStatus: Identifiable {
         } else {
             result.append(AgentStatus(engine: .gemini, path: nil, version: nil, verified: false))
         }
+        result.append(AgentStatus(engine: .appleIntelligence, path: nil, version: nil, verified: true, unavailableReason: AppleFoundationAnalyst.unavailabilityReason()))
         return result
     }
 }
 
-/// One button: opens Terminal with the tool's install script. The script
-/// itself says where to look if it fails.
+/// One button: opens Terminal with the tool's install script (the script says
+/// where to look if it fails), or System Settings for Apple Intelligence.
 struct InstallLink: View {
     let engine: EngineChoice
 
     var body: some View {
-        Button("Install") {
-            try? AgentInstaller.install(engine)
+        if engine == .appleIntelligence {
+            Button("Open System Settings") { NSWorkspace.shared.open(AppleFoundationAnalyst.settingsURL) }
+                .controlSize(.small)
+        } else {
+            Button("Install") { try? AgentInstaller.install(engine) }
+                .controlSize(.small)
+                .help(engine.installCommand ?? "")
         }
-        .controlSize(.small)
-        .help(engine.installCommand ?? "")
     }
 }
 
@@ -179,81 +195,85 @@ private struct AITab: View {
                 }
             } else {
                 Section {
+                    // Only what can actually be used right now is offered.
                     Picker("AI agent", selection: $model.settings.engine) {
-                        ForEach([EngineChoice.auto, .claudeCode, .codex, .gemini, .none], id: \.self) { choice in
-                            Text(choice == .none ? "None" : choice.displayName).tag(choice)
+                        ForEach(usableAgents, id: \.self) { choice in
+                            Text(choice.displayName).tag(choice)
                         }
+                        Text("None").tag(EngineChoice.none)
                     }
-                    if EngineChoice.agents.contains(engine) {
+                    if engine == .appleIntelligence {
+                        LabeledContent("Model", value: "On-device model")
+                    } else if EngineChoice.commandLineAgents.contains(engine) {
                         ModelPicker(engine: engine, settings: $model.settings)
-                    }
-                    if engine != .none {
-                        LabeledContent("Active", value: model.engineDescription)
                     }
                 } footer: {
                     switch engine {
                     case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
-                    case .auto: Text("Automatic uses the first agent installed: Claude Code, Codex, Gemini. The agent explains the evidence and answers questions; it cannot override it.")
-                    default: Text("“Default” is the model the tool itself is configured with. The agent explains the evidence and answers questions; it cannot override it.")
+                    case .appleIntelligence: Text("Apple's on-device model explains the evidence without anything leaving this Mac. Smaller than the cloud agents, so expect shorter answers.")
+                    default: Text("The agent explains the evidence and answers questions; it cannot override it.")
                     }
                 }
 
-                if engine != .none {
-                    Section("Installed") {
-                        ForEach(agents) { agent in
-                            LabeledContent(agent.engine.displayName) {
-                                if agent.isInstalled {
-                                    Text(agent.summary).foregroundStyle(.secondary)
-                                } else {
-                                    HStack(spacing: 10) {
-                                        Text("Not installed").foregroundStyle(.secondary)
-                                        InstallLink(engine: agent.engine)
-                                    }
-                                }
+                Section("Agents on this Mac") {
+                    ForEach(agents) { agent in
+                        LabeledContent(agent.engine.displayName) {
+                            HStack(spacing: 10) {
+                                Text(agent.summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                if !agent.isUsable { InstallLink(engine: agent.engine) }
                             }
                         }
-                        if agents.isEmpty { ProgressView().controlSize(.small) }
                     }
+                    if agents.isEmpty { ProgressView().controlSize(.small) }
                 }
             }
         }
         .formStyle(.grouped)
-        .task { agents = await AgentStatus.detectAll(settings: model.settings) }
+        .task { await detect() }
         .onChange(of: model.settings.engine) { _, _ in Task { await model.refreshEngineDescription() } }
         // Coming back from Terminal after an install: look again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task {
-                agents = await AgentStatus.detectAll(settings: model.settings)
-                model.settings = model.settings
-                await model.refreshEngineDescription()
-            }
+            Task { await detect() }
         }
+    }
+
+    private var usableAgents: [EngineChoice] {
+        let usable = agents.filter(\.isUsable).map(\.engine)
+        // Keep the current choice visible even if it just became unavailable, so the picker stays consistent.
+        if EngineChoice.agents.contains(engine), !usable.contains(engine) { return usable + [engine] }
+        return usable
+    }
+
+    private func detect() async {
+        agents = await AgentStatus.detectAll(settings: model.settings)
+        // "Automatic" is how the app starts; the picker shows a concrete agent.
+        if model.settings.engine == .auto {
+            model.settings.engine = agents.first(where: \.isUsable)?.engine ?? .none
+        }
+        await model.refreshEngineDescription()
     }
 }
 
 private struct ModelPicker: View {
     let engine: EngineChoice
     @Binding var settings: WhoRUCore.Settings
-    @State private var custom = ""
 
-    private var current: String { settings.model(for: engine) }
-    private var isSuggested: Bool { engine.suggestedModels.contains(current) }
+    private var stored: String { settings.engineModels[engine.rawValue] ?? "" }
+    private var isCustom: Bool { !stored.isEmpty && !engine.suggestedModels.contains(stored) }
 
     var body: some View {
         Picker("Model", selection: Binding(
-            get: { isSuggested ? current : "custom" },
-            set: { value in
-                if value == "custom" { custom = current; settings.engineModels[engine.rawValue] = custom.isEmpty ? "custom" : custom } else { settings.engineModels[engine.rawValue] = value }
-            }
+            get: { isCustom ? "custom" : settings.model(for: engine) },
+            set: { value in settings.engineModels[engine.rawValue] = value == "custom" ? "custom" : value }
         )) {
             ForEach(engine.suggestedModels, id: \.self) { name in
                 Text(engine.modelDisplayName(name)).tag(name)
             }
-            Text("Custom…").tag("custom")
+            Text("Other…").tag("custom")
         }
-        if !isSuggested {
+        if isCustom {
             TextField("Model name", text: Binding(
-                get: { settings.model(for: engine) == "custom" ? "" : settings.model(for: engine) },
+                get: { stored == "custom" ? "" : stored },
                 set: { settings.engineModels[engine.rawValue] = $0.isEmpty ? "custom" : $0 }
             ))
             .textFieldStyle(.roundedBorder)

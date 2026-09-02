@@ -118,15 +118,13 @@ final class AppModel {
         let env = await environment()
         AppLog.shared.info("app", "engine: \(env.analyst?.id ?? "none") (setting \(settings.engine.rawValue))")
         if let analyst = env.analyst {
-            func chosen(_ engine: EngineChoice) -> String {
-                let m = settings.model(for: engine)
-                return m.isEmpty ? "default model" : m
-            }
+            func chosen(_ engine: EngineChoice) -> String { engine.modelDisplayName(settings.model(for: engine)) }
             switch analyst.id {
-            case "claude-code": engineDescription = "Claude Code · \(settings.model(for: .claudeCode).isEmpty ? settings.depth.modelID : chosen(.claudeCode))"
+            case "claude-code": engineDescription = "Claude Code · \(chosen(.claudeCode))"
             case "claude-api": engineDescription = "Claude API · \(settings.depth.modelID)"
             case "codex": engineDescription = "Codex CLI · \(chosen(.codex))"
             case "gemini": engineDescription = "Gemini CLI · \(chosen(.gemini))"
+            case "apple": engineDescription = "Apple Intelligence · on-device"
             case "local": engineDescription = "Local model · \(settings.localModelName)"
             default: engineDescription = analyst.id
             }

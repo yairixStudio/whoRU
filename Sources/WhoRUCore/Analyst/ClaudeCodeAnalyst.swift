@@ -65,7 +65,7 @@ public struct ClaudeCodeAnalyst: Analyst {
     }
 
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
-        let modelArgument = model.isEmpty ? request.model : model
+        let modelArgument = model.isEmpty || model == "custom" ? request.model : model
         onEvent(.started(model: modelArgument))
         let prompt = AnalystPrompt.userMessage(for: request.bundle) + "\n\n" + AnalystPrompt.schemaInstruction()
         let output = try await run([
