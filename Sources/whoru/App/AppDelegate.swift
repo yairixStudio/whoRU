@@ -1,8 +1,12 @@
 import AppKit
+import OSLog
 import SwiftUI
 import UserNotifications
 import WhoRUCore
 import WhoRUMac
+
+/// `log stream --predicate 'subsystem == "com.yairixstudio.whoru"'` shows what the app sees.
+let log = Logger(subsystem: WhoRUMac.bundleIdentifier, category: "app")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -59,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.watcher = watcher
         model.watcherRunning = true
+        log.info("watcher started")
         Task { [weak self] in
             for await event in watcher.events {
                 await MainActor.run { self?.handle(event) }
@@ -69,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handle(_ event: DialogEvent) {
         switch event {
         case .appeared(let dialog):
+            log.info("dialog appeared: \(dialog.title, privacy: .public) at \(dialog.frame.x, privacy: .public),\(dialog.frame.y, privacy: .public)")
             guard model.settings.showNextToDialogs, !model.isPaused else { return }
             let session = model.startScan(for: dialog)
             guard model.settings.isEnabled(session.prompt.service) else {
@@ -82,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .moved(let id, let frame):
             panels[id]?.place(besideDialog: frame, animated: true)
         case .closed(let id):
+            log.info("dialog closed: \(id, privacy: .public)")
             guard let panel = panels[id] else { return }
             let session = panel.session
             session.dialogClosed = true
