@@ -20,9 +20,16 @@ Which app asked, for which permission, and the exact dialog text if you have it:
 **What whoRU showed**
 Evidence rows, headline, verdict. A screenshot of the panel helps. Use “How did you check?” to copy the raw output if relevant.
 
-**Environment**
+**Diagnostics**
+In whoRU: Settings → Privacy → “Copy Diagnostics Report”, then paste it here. It contains versions, the engine, settings, the permission state and the last log lines. No secrets and no file contents.
+
+```
+(paste the report)
+```
+
+**Environment** (if you cannot copy the report)
 - macOS version:
 - whoRU version or commit:
-- AI engine (none / API / Claude Code):
+- AI engine (none / API / Claude Code / Codex / Gemini):
 
 **Anything else**
