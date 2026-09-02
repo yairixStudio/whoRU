@@ -88,8 +88,9 @@ Signed builds are not published yet. Building from source takes a minute and nee
 ```sh
 git clone https://github.com/yairixStudio/whoRU.git
 cd whoRU
-scripts/build-app.sh          # → build/whoRU.app, ad-hoc signed
+scripts/build-app.sh          # → build/whoRU.app (signed with your certificate if you have one, else ad-hoc)
 open build/whoRU.app
+scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applications
 ```
 
 First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out, an API key, or none.

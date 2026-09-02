@@ -81,26 +81,40 @@ final class CompanionPanel: NSPanel {
 
     private var currentHeight: CGFloat { min(contentHeight, Self.maxHeight) }
 
+    /// Where the panel goes for a given dialog frame. Candidates in order:
+    /// where the user last put it, right, left, below, above. The first one
+    /// that stays on screen without covering the dialog wins; the panel must
+    /// never hide the buttons it is explaining.
     private func targetFrame(besideDialog frame: Rect, height: CGFloat) -> NSRect {
         guard let screen = screenContaining(frame) ?? NSScreen.main else { return self.frame }
-        let dialogAppKit = Self.appKitRect(frame)
-        let visible = screen.visibleFrame
-        var x: CGFloat
-        var y: CGFloat
+        let dialog = Self.appKitRect(frame)
+        let visible = screen.visibleFrame.insetBy(dx: 8, dy: 8)
+        let size = NSSize(width: Self.width, height: height)
+        let keepOut = dialog.insetBy(dx: -Self.gap / 2, dy: -Self.gap / 2)
+
+        var candidates: [NSRect] = []
         if let userOffset {
-            x = dialogAppKit.maxX + userOffset.x
-            y = dialogAppKit.maxY + userOffset.y - height
-        } else {
-            let rightRoom = visible.maxX - dialogAppKit.maxX
-            let leftRoom = dialogAppKit.minX - visible.minX
-            x = (rightRoom >= Self.width + Self.gap * 2 || rightRoom >= leftRoom)
-                ? dialogAppKit.maxX + Self.gap
-                : dialogAppKit.minX - Self.gap - Self.width
-            y = dialogAppKit.maxY - height
+            candidates.append(NSRect(origin: NSPoint(x: dialog.maxX + userOffset.x, y: dialog.maxY + userOffset.y - height), size: size))
         }
-        x = max(visible.minX + 8, min(x, visible.maxX - Self.width - 8))
-        y = max(visible.minY + 8, min(y, visible.maxY - height - 8))
-        return NSRect(x: x, y: y, width: Self.width, height: height)
+        let right = NSRect(x: dialog.maxX + Self.gap, y: dialog.maxY - height, width: size.width, height: size.height)
+        let left = NSRect(x: dialog.minX - Self.gap - Self.width, y: dialog.maxY - height, width: size.width, height: size.height)
+        let below = NSRect(x: dialog.midX - Self.width / 2, y: dialog.minY - Self.gap - height, width: size.width, height: size.height)
+        let above = NSRect(x: dialog.midX - Self.width / 2, y: dialog.maxY + Self.gap, width: size.width, height: size.height)
+        let rightRoom = visible.maxX - dialog.maxX
+        let leftRoom = dialog.minX - visible.minX
+        candidates += rightRoom >= leftRoom ? [right, left, below, above] : [left, right, below, above]
+
+        for candidate in candidates {
+            // Slide vertically to stay on screen; that never causes overlap on the sides.
+            var rect = candidate
+            rect.origin.y = max(visible.minY, min(rect.origin.y, visible.maxY - height))
+            if visible.contains(rect), !rect.intersects(keepOut) { return rect }
+        }
+        // Nothing fits cleanly (tiny screen): clamp the preferred side on screen.
+        var rect = candidates.first ?? right
+        rect.origin.x = max(visible.minX, min(rect.origin.x, visible.maxX - Self.width))
+        rect.origin.y = max(visible.minY, min(rect.origin.y, visible.maxY - height))
+        return rect
     }
 
     // MARK: Following a dragged dialog
@@ -176,13 +190,21 @@ final class CompanionPanel: NSPanel {
         }
     }
 
+    private var dragStartOrigin: NSPoint?
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartOrigin = frame.origin
+        super.mouseDown(with: event)
+    }
+
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
-        // Remember where the user put it relative to the dialog.
-        if let dialogFrame {
-            let dialogAppKit = Self.appKitRect(dialogFrame)
-            userOffset = CGPoint(x: frame.minX - dialogAppKit.maxX, y: frame.maxY - dialogAppKit.maxY)
-        }
+        // Remember where the user put it relative to the dialog, but only
+        // after a real drag; a click on a disclosure is not a placement choice.
+        defer { dragStartOrigin = nil }
+        guard let start = dragStartOrigin, hypot(frame.origin.x - start.x, frame.origin.y - start.y) > 4, let dialogFrame else { return }
+        let dialogAppKit = Self.appKitRect(dialogFrame)
+        userOffset = CGPoint(x: frame.minX - dialogAppKit.maxX, y: frame.maxY - dialogAppKit.maxY)
     }
 
     // MARK: Appearance
