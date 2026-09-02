@@ -63,7 +63,11 @@ permission dialog ──▶ Watcher ──▶ Resolver ──▶ Collector ─�
 - **Resolver** turns the display name in the dialog into a file on disk, a process, and a bundle identifier, with a confidence level.
 - **Collector** runs independent evidence checks in parallel. Each one is a deterministic command or system API whose raw output you can inspect.
 - **HardScore** turns the evidence into a red / amber / green floor and ceiling. A broken signature is red, no matter what anyone says afterwards. A one-sentence headline is on screen in about a second, before any model runs.
-- **AI Analyst** (optional) receives the evidence bundle and returns a structured verdict. It can lower confidence and raise suspicion. It cannot turn a red into a green; the app enforces that in code, not in the prompt.
+- **AI Analyst** (optional) receives the evidence bundle and returns a structured verdict. It can lower confidence and raise suspicion. It cannot turn a red into a green; the app enforces that in code, not in the prompt. Engines: Claude Code, the Claude API, Codex CLI, Gemini CLI, or a local Ollama-style model; whoRU picks whatever is installed and you can change it in Settings → AI.
+
+<img src="docs/images/settings-ai.png" width="480" alt="whoRU settings, AI tab: engine picker, installed tools, API key, analysis depth, monthly budget">
+
+- **Strictness** (Settings → General): *standard* trusts a valid signature from a known publisher; *strict* insists on notarization or an official-release match and keeps unknown origins amber.
 
 More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
