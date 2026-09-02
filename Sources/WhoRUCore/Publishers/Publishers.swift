@@ -19,12 +19,20 @@ public struct ManifestSource: Codable, Sendable, Hashable {
     public var format: String
     /// Key to pick inside the manifest, e.g. `darwin-arm64`.
     public var platformKey: String
+    /// Path fragments that identify an install of this program even when the
+    /// file has no bundle identifier (a bare binary named after its version).
+    public var pathMarkers: [String]
 
-    public init(urlTemplate: String, identifiers: [String], format: String, platformKey: String) {
+    public init(urlTemplate: String, identifiers: [String], format: String, platformKey: String, pathMarkers: [String] = []) {
         self.urlTemplate = urlTemplate
         self.identifiers = identifiers
         self.format = format
         self.platformKey = platformKey
+        self.pathMarkers = pathMarkers
+    }
+
+    public func covers(identifiers: [String], path: String) -> Bool {
+        identifiers.contains(where: { self.identifiers.contains($0) }) || pathMarkers.contains(where: { path.contains($0) })
     }
 }
 
@@ -90,10 +98,10 @@ public struct PublisherDirectory: Sendable {
         return byTeamID[teamID]
     }
 
-    /// Manifest sources that claim to cover this identifier.
-    public func manifestSource(forIdentifier identifier: String) -> (Publisher, ManifestSource)? {
-        for p in byTeamID.values {
-            if let m = p.manifest, m.identifiers.contains(identifier) { return (p, m) }
+    /// The manifest source that covers a program, by identifier or by path.
+    public func manifestSource(identifiers: [String], path: String) -> (Publisher, ManifestSource)? {
+        for p in byTeamID.values.sorted(by: { $0.teamID < $1.teamID }) {
+            if let m = p.manifest, m.covers(identifiers: identifiers, path: path) { return (p, m) }
         }
         return nil
     }

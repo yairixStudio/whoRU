@@ -94,6 +94,9 @@ public struct ClaudeCodeAnalyst: Analyst {
     private func run(_ arguments: [String]) async throws -> CommandOutput {
         var environment = ProcessInfo.processInfo.environment
         environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
+        // Allow running from inside another Claude Code session (development, CI).
+        environment["CLAUDECODE"] = nil
+        environment["CLAUDE_CODE_ENTRYPOINT"] = nil
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: environment)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else { throw AnalystError.invalidResponse("claude exited \(output.status): \(output.stderr.prefix(300))") }

@@ -98,7 +98,7 @@ public struct PromptParser: Sendable {
 
     /// Keyword table mapping the English request phrase to a service. Order
     /// matters: the first hit wins, so specific phrases come first.
-    static let serviceKeywords: [(PermissionService, [String])] = [
+    public static let serviceKeywords: [(PermissionService, [String])] = [
         (.networkVolumes, ["network volume"]),
         (.removableVolumes, ["removable volume"]),
         (.desktopFolder, ["desktop folder"]),

@@ -64,7 +64,7 @@ public struct OfficialManifestCheck: EvidenceCheck {
     public func run(on subject: Subject, context: CheckContext) async throws -> EvidenceItem {
         if context.settings.localOnly { return .skipped(key, weight: weight, reason: "local-only mode") }
         let identifiers = [subject.bundleID, subject.displayName, (subject.path as NSString).lastPathComponent].compactMap { $0 }
-        guard let (publisher, source) = identifiers.lazy.compactMap({ context.publishers.manifestSource(forIdentifier: $0) }).first else {
+        guard let (publisher, source) = context.publishers.manifestSource(identifiers: identifiers, path: subject.path) else {
             return .skipped(key, weight: weight, reason: "no official manifest source for this program")
         }
         guard let version = subject.version ?? Self.versionFromPath(subject.path) else {

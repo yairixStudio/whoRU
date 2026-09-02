@@ -26,7 +26,8 @@ public enum BuiltinPublishers {
                 urlTemplate: "https://downloads.claude.ai/claude-code-releases/{version}/manifest.json",
                 identifiers: ["com.anthropic.claude-code", "claude"],
                 format: "claudeCode",
-                platformKey: "darwin-arm64"
+                platformKey: "darwin-arm64",
+                pathMarkers: ["/.local/share/claude/versions/", "/ClaudeCode.app/"]
             )
         ),
         Publisher(teamID: "EQHXZ8M8AV", name: "Google LLC", knownNames: ["Google Chrome", "Google Chrome Helper", "Google Drive", "Antigravity"]),

@@ -34,7 +34,10 @@ public struct RequesterResolver: Sendable {
         var best: Subject?
 
         func consider(_ process: RunningProcess, strategy: String, confidence: Confidence) {
-            candidates.append(SubjectCandidate(path: process.path, pid: process.pid, strategy: strategy, confidence: confidence))
+            // Several processes of the same file (many terminal sessions of one tool) are one candidate.
+            if !candidates.contains(where: { $0.path == process.path }) {
+                candidates.append(SubjectCandidate(path: process.path, pid: process.pid, strategy: strategy, confidence: confidence))
+            }
             if best == nil || confidence > best!.resolver.confidence {
                 best = makeSubject(from: process, strategy: strategy, confidence: confidence)
             }
