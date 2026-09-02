@@ -73,6 +73,36 @@ final class AppModel {
 
     var isPaused: Bool { pausedUntil.map { $0 > Date() } ?? false }
 
+    static var logDirectory: URL {
+        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Logs/whoRU", isDirectory: true)
+    }
+
+    /// Everything a bug report needs, without secrets: versions, engine,
+    /// settings, permission state and the last few hundred log lines.
+    func diagnosticsReport() async -> String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        var lines = [
+            "whoRU \(version) (\(build)) · \(Bundle.main.bundlePath)",
+            "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)",
+            "Accessibility: \(AccessibilityPermission.isGranted ? "granted" : "not granted") · watcher \(watcherRunning ? "running" : "stopped")",
+            "Engine: \(engineDescription) (setting: \(settings.engine.rawValue), depth \(settings.depth.rawValue), strictness \(settings.strictness.rawValue))",
+            "Claude Code: \(ClaudeCodeAnalyst.locate() ?? "not found") · Codex: \(CodexAnalyst.locate() ?? "not found") · Gemini: \(GeminiAnalyst.locate() ?? "not found")",
+            "API key: \(secrets.secret(.anthropicAPIKey) != nil ? "saved" : "none") · VirusTotal key: \(secrets.secret(.virusTotalAPIKey) != nil ? "saved" : "none")",
+            "Sessions on screen: \(sessions.count) · scans stored: \((try? await store.all().count) ?? 0) · spend this month: $\(String(format: "%.2f", monthlySpend))",
+            "",
+            "--- settings.json ---",
+        ]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        lines.append((try? String(decoding: encoder.encode(settings), as: UTF8.self)) ?? "(unavailable)")
+        lines.append("")
+        lines.append("--- last \(min(300, AppLog.shared.recentLines().count)) log lines ---")
+        lines += AppLog.shared.recentLines(300)
+        return lines.joined(separator: "\n")
+    }
+
     func environment() async -> ScanEnvironment {
         if let task = environmentTask { return await task.value }
         let settings = settings
@@ -86,6 +116,7 @@ final class AppModel {
 
     func refreshEngineDescription() async {
         let env = await environment()
+        AppLog.shared.info("app", "engine: \(env.analyst?.id ?? "none") (setting \(settings.engine.rawValue))")
         if let analyst = env.analyst {
             func chosen(_ engine: EngineChoice) -> String {
                 let m = settings.model(for: engine)

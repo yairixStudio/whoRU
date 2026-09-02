@@ -65,6 +65,10 @@ public struct ScanPipeline: Sendable {
     public func run(prompt: PermissionPrompt, presetSubject: Subject? = nil, onEvent: @escaping @Sendable (ScanEvent) -> Void) async -> ScanRecord {
         let env = environment
         var record = ScanRecord(prompt: prompt)
+        let started = Date()
+        let log = AppLog.shared
+        let scanID = String(record.id.uuidString.prefix(8)).lowercased()
+        log.info("scan", "\(scanID) start: “\(prompt.requesterName)” · \(prompt.service.shortName) · engine \(env.analyst?.id ?? "none") · strictness \(env.settings.strictness.rawValue)")
 
         // 1. Resolve.
         let resolved: ResolveResult
@@ -75,6 +79,11 @@ public struct ScanPipeline: Sendable {
         }
         record.subject = resolved.subject
         record.candidates = resolved.candidates
+        if let subject = resolved.subject {
+            log.info("scan", "\(scanID) resolved in \(elapsedMs(since: started)) ms: \(subject.path) [\(subject.resolver.strategy), \(subject.resolver.confidence.rawValue)]\(resolved.candidates.count > 1 ? " · \(resolved.candidates.count) candidates" : "")")
+        } else {
+            log.warn("scan", "\(scanID) not resolved in \(elapsedMs(since: started)) ms")
+        }
         onEvent(.resolved(resolved.subject, candidates: resolved.candidates))
 
         // 2. Collect fast evidence and derivations.
@@ -83,7 +92,16 @@ public struct ScanPipeline: Sendable {
             let history = try? await env.store?.history(teamID: nil, sha256: nil)
             var context = CheckContext(prompt: prompt, settings: env.settings, publishers: env.publishers, secrets: env.secrets, history: history)
             context.timeout = .seconds(4)
-            evidence = await env.collector.collect(subject: subject, context: context, includeSlow: false, onItem: { onEvent(.evidence($0)) })
+            evidence = await env.collector.collect(subject: subject, context: context, includeSlow: false, onItem: { item in
+                if item.status == .error || item.status == .fail {
+                    log.warn("evidence", "\(scanID) \(item.key.rawValue) \(item.status.rawValue) in \(item.durationMs) ms: \(item.summary)")
+                } else {
+                    log.debug("evidence", "\(scanID) \(item.key.rawValue) \(item.status.rawValue) in \(item.durationMs) ms")
+                }
+                onEvent(.evidence(item))
+            })
+            let slowest = evidence.max { $0.durationMs < $1.durationMs }
+            log.info("scan", "\(scanID) \(evidence.count) fast checks in \(elapsedMs(since: started)) ms\(slowest.map { " · slowest \($0.key.rawValue) \($0.durationMs) ms" } ?? "")")
             // History needs the Team ID and hash, which only exist after the checks ran.
             if let store = env.store {
                 let facts = HardScoreEngine.mergedFacts(evidence)
@@ -104,6 +122,7 @@ public struct ScanPipeline: Sendable {
         let headline = HeadlineComposer().headline(for: hard, subject: resolved.subject, prompt: prompt, locale: env.locale)
         record.hardScore = hard
         record.deterministicHeadline = headline
+        log.info("scan", "\(scanID) \(hard.score.rawValue.uppercased()) in \(elapsedMs(since: started)) ms: \(headline.title) — \(hard.reasons.map(\.code).joined(separator: ", "))")
         onEvent(.hardScore(hard, headline))
         try? await env.store?.save(record)
 
@@ -116,27 +135,23 @@ public struct ScanPipeline: Sendable {
             record.model = cached.model
             record.fromCache = true
             record.analystSession = cached.analystSession
+            log.info("scan", "\(scanID) verdict from cache (\(cached.startedAt.formatted(.iso8601)))")
             onEvent(.cached(cached))
             onEvent(.verdict(verdict))
             return await finish(record, onEvent: onEvent)
         }
 
         // 5. Decide whether to ask the model.
-        guard let analyst = env.analyst else {
-            onEvent(.analysisSkipped(reason: "no AI engine configured"))
+        func skip(_ reason: String) async -> ScanRecord {
+            log.info("scan", "\(scanID) model skipped: \(reason)")
+            onEvent(.analysisSkipped(reason: reason))
             return await finish(record, onEvent: onEvent)
         }
-        if env.settings.localOnly, analyst.id != "local" {
-            onEvent(.analysisSkipped(reason: "local-only mode"))
-            return await finish(record, onEvent: onEvent)
-        }
-        if hard.canSkipModel {
-            onEvent(.analysisSkipped(reason: hard.isSystemComponent ? "system component signed by Apple" : "trusted publisher"))
-            return await finish(record, onEvent: onEvent)
-        }
+        guard let analyst = env.analyst else { return await skip("no AI engine configured") }
+        if env.settings.localOnly, analyst.id != "local" { return await skip("local-only mode") }
+        if hard.canSkipModel { return await skip(hard.isSystemComponent ? "system component signed by Apple" : "trusted publisher") }
         if let store = env.store, let spend = try? await store.monthlySpend(), spend >= env.settings.monthlyBudgetUSD, analyst.id == "claude-api" {
-            onEvent(.analysisSkipped(reason: "monthly budget reached"))
-            return await finish(record, onEvent: onEvent)
+            return await skip("monthly budget reached")
         }
 
         // 6. Analyze.
@@ -150,8 +165,13 @@ public struct ScanPipeline: Sendable {
             maxToolCalls: env.settings.maxToolCalls, allowWebSearch: env.settings.allowWebSearch, locale: env.locale
         )
         let tools = ToolRegistry(subject: resolved.subject, handlers: env.toolHandlers(resolved.subject, evidence))
+        let analysisStarted = Date()
+        log.info("analyst", "\(scanID) \(analyst.id) start · model \(request.model) · \(tools.tools.count) tools")
         do {
-            let result = try await analyst.analyze(request, tools: tools, onEvent: { onEvent(.analysis($0)) })
+            let result = try await analyst.analyze(request, tools: tools, onEvent: { event in
+                if case .toolCall(let name, _) = event { log.info("analyst", "\(scanID) tool \(name)") }
+                onEvent(.analysis(event))
+            })
             record.engine = analyst.id
             record.model = result.model
             record.inputTokens = result.inputTokens
@@ -161,12 +181,15 @@ public struct ScanPipeline: Sendable {
             switch VerdictValidator().validate(result.verdict, against: hard, evidenceKeys: Set(evidence.map(\.key.rawValue))) {
             case .accepted(let verdict):
                 record.verdict = verdict
+                log.info("analyst", "\(scanID) \(analyst.id) verdict in \(elapsedMs(since: analysisStarted)) ms: \(verdict.verdict.rawValue) \(verdict.confidence)% \(verdict.recommendation.rawValue) · \(result.inputTokens) in / \(result.outputTokens) out · $\(String(format: "%.4f", result.costUSD))")
                 onEvent(.verdict(verdict))
             case .rejected(let reason):
                 record.verdictRejected = reason
+                log.error("analyst", "\(scanID) \(analyst.id) verdict REJECTED after \(elapsedMs(since: analysisStarted)) ms: \(reason)")
                 onEvent(.verdictRejected(reason: reason))
             }
         } catch {
+            log.error("analyst", "\(scanID) \(analyst.id) failed after \(elapsedMs(since: analysisStarted)) ms: \(error)")
             onEvent(.analysisFailed(String(describing: error)))
         }
         return await finish(record, onEvent: onEvent)
@@ -199,7 +222,16 @@ public struct ScanPipeline: Sendable {
         let tools = ToolRegistry(subject: record.subject, handlers: env.toolHandlers(record.subject, record.evidence))
         var updated = record
         updated.messages.append(ChatMessage(role: .user, text: question))
-        let reply = try await analyst.reply(to: question, session: session, request: request, tools: tools, onEvent: onEvent)
+        let started = Date()
+        AppLog.shared.info("chat", "\(String(record.id.uuidString.prefix(8)).lowercased()) question via \(analyst.id)")
+        let reply: ChatReply
+        do {
+            reply = try await analyst.reply(to: question, session: session, request: request, tools: tools, onEvent: onEvent)
+        } catch {
+            AppLog.shared.error("chat", "\(String(record.id.uuidString.prefix(8)).lowercased()) failed after \(elapsedMs(since: started)) ms: \(error)")
+            throw error
+        }
+        AppLog.shared.info("chat", "\(String(record.id.uuidString.prefix(8)).lowercased()) answered in \(elapsedMs(since: started)) ms")
         updated.messages.append(ChatMessage(role: .assistant, text: reply.text, toolCalls: reply.toolCalls))
         updated.analystSession = reply.session
         updated.inputTokens += reply.inputTokens

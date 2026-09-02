@@ -27,9 +27,15 @@ public enum Command {
             throw CommandError("not executable: \(executable)")
         }
         let timeoutSeconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-        return try await Task.detached(priority: .userInitiated) {
+        let output = try await Task.detached(priority: .userInitiated) {
             try runBlocking(executable, arguments, timeoutSeconds: timeoutSeconds, environment: environment, workingDirectory: workingDirectory)
         }.value
+        if output.timedOut {
+            AppLog.shared.warn("command", "\((executable as NSString).lastPathComponent) timed out after \(output.durationMs) ms")
+        } else if output.status != 0 {
+            AppLog.shared.debug("command", "\((executable as NSString).lastPathComponent) exited \(output.status) in \(output.durationMs) ms")
+        }
+        return output
     }
 
     /// Synchronous body, kept off the async context because pipe reads and

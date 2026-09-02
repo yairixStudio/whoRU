@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        AppLog.shared.configure(directory: AppModel.logDirectory)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        AppLog.shared.info("app", "whoRU \(version) (\(build)) launched on macOS \(ProcessInfo.processInfo.operatingSystemVersionString) from \(Bundle.main.bundlePath) · accessibility \(AccessibilityPermission.isGranted ? "granted" : "not granted") · args \(CommandLine.arguments.dropFirst().joined(separator: " "))")
         model.applyLaunchAtLogin()
         if !model.settings.onboardingCompleted || !AccessibilityPermission.isGranted || CommandLine.arguments.contains("--onboarding") {
             showOnboarding()
@@ -77,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.watcher = watcher
         model.watcherRunning = true
         log.info("watcher started")
+        AppLog.shared.info("app", "watcher started")
         Task { [weak self] in
             for await event in watcher.events {
                 await MainActor.run { self?.handle(event) }
@@ -98,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.place(besideDialog: dialog.frame)
             panel.fadeIn()
             panels[dialog.id] = panel
+            AppLog.shared.info("app", "panel shown for “\(session.prompt.requesterName)” · \(session.prompt.service.shortName) at \(Int(panel.frame.minX)),\(Int(panel.frame.minY))")
         case .moved(let id, let frame):
             panels[id]?.place(besideDialog: frame)
         case .closed(let id):

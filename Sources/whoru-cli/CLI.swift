@@ -64,6 +64,8 @@ struct CLI {
         #if os(macOS)
         let paths = DefaultPaths()
         var settings = (try? JSONFileSettingsStore(paths: paths).load()) ?? Settings()
+        AppLog.shared.configure(directory: FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!.appendingPathComponent("Logs/whoRU", isDirectory: true))
+        AppLog.shared.echoToStderr = options.flag("--verbose")
         if noAI { settings.engine = .none }
         if let engine = options.value("--engine").flatMap(EngineChoice.init(rawValue:)) { settings.engine = engine }
         if let modelName = options.value("--model") { settings.engineModels[settings.engine.rawValue] = modelName }
@@ -205,6 +207,7 @@ struct CLI {
         let settings = (try? JSONFileSettingsStore(paths: paths).load()) ?? Settings()
         let secrets = MacEnvironment.secrets()
         print("data:            \(paths.applicationSupport.path)")
+        print("log:             ~/Library/Logs/whoRU/whoru.log")
         print("engine setting:  \(settings.engine.rawValue), depth \(settings.depth.rawValue) → \(settings.depth.modelID)")
         if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate() {
             let trusted = await ClaudeCodeVerifier.isTrusted(path)
@@ -244,7 +247,7 @@ struct Options {
         var iterator = args.makeIterator()
         while let arg = iterator.next() {
             if arg.hasPrefix("--") {
-                if ["--json", "--no-ai", "--no-store", "--slow"].contains(arg) {
+                if ["--json", "--no-ai", "--no-store", "--slow", "--verbose"].contains(arg) {
                     flags.insert(arg)
                 } else if let value = iterator.next() {
                     values[arg] = value

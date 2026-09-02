@@ -118,6 +118,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard started else { return }
         if !AXIsProcessTrusted() {
             log.error("Accessibility permission was revoked; stopping")
+            AppLog.shared.error("watcher", "Accessibility permission revoked; watcher stopped")
             stop()
             return
         }
@@ -130,6 +131,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             guard let info = current.first(where: { $0.number == number }) else {
                 tracked[number] = nil
                 log.info("window \(number, privacy: .public) gone")
+                AppLog.shared.info("watcher", "prompt window \(number) closed")
                 continuation.yield(.closed(id: entry.id))
                 continue
             }
@@ -166,6 +168,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             if retries[info.number, default: 0] > 6 {
                 retries[info.number] = nil
                 log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) (layer \(info.layer, privacy: .public)) exposes no AX window")
+                AppLog.shared.warn("watcher", "window \(info.number) of \(info.owner) (layer \(info.layer), \(Int(info.frame.width))×\(Int(info.frame.height))) exposes no AX window")
                 if known {
                     // Still worth showing: the panel explains that the text could not be read.
                     emit(info, title: "", body: nil, buttons: [], started: started)
@@ -180,6 +183,9 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         let buttons = buttonTitles(in: window)
         guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
             log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, no prompt pattern matched: \(texts.joined(separator: " | "), privacy: .public)")
+            if known {
+                AppLog.shared.warn("watcher", "window of \(info.owner) had no recognizable prompt text (\(texts.count) texts): \(texts.joined(separator: " | ").prefix(200))")
+            }
             if known {
                 emit(info, title: texts.first ?? "", body: texts.dropFirst().first, buttons: buttons, started: started)
             } else {
@@ -199,6 +205,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         let id = "\(info.pid)-\(info.number)"
         tracked[info.number] = Tracked(id: id, pid: info.pid, frame: info.frame)
         log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
+        AppLog.shared.info("watcher", "prompt in \(info.owner) (pid \(info.pid), window \(info.number), layer \(info.layer)) read in \(elapsedMs(since: started)) ms: \(title.isEmpty ? "(no text)" : title)")
         continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons)))
     }
 

@@ -251,6 +251,7 @@ private struct PrivacyTab: View {
     @State private var vtKey = ""
     @State private var vtMessage = ""
     @State private var confirmReset = false
+    @State private var diagnosticsMessage = ""
 
     var body: some View {
         Form {
@@ -289,6 +290,28 @@ private struct PrivacyTab: View {
                     }
             } footer: {
                 Text("Full Disk Access is optional. It lets whoRU read the decision you made from the system’s permission database and fill history in automatically.")
+            }
+            Section {
+                LabeledContent("Log file") {
+                    Button("Show in Finder") {
+                        if let url = AppLog.shared.fileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } else { NSWorkspace.shared.open(AppModel.logDirectory) }
+                    }
+                }
+                HStack {
+                    Button("Copy Diagnostics Report") {
+                        Task {
+                            let report = await model.diagnosticsReport()
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(report, forType: .string)
+                            diagnosticsMessage = "Copied · paste it into a GitHub issue"
+                        }
+                    }
+                    Text(diagnosticsMessage).font(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text("The log records what whoRU saw and did: dialogs, checks with timings, engine calls and errors. No secrets, no file contents.")
             }
         }
         .formStyle(.grouped)
