@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build, test, package
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.app/Contents/Developer 2>/dev/null || sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Package app (ad-hoc signed)
+        run: |
+          chmod +x scripts/build-app.sh
+          scripts/build-app.sh
+          ditto -c -k --keepParent build/whoRU.app build/whoRU.zip
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: whoRU-${{ github.sha }}
+          path: build/whoRU.zip
+          if-no-files-found: error

@@ -1,0 +1,23 @@
+included:
+  - Sources
+  - Tests
+excluded:
+  - .build
+  - build
+disabled_rules:
+  - line_length
+  - identifier_name
+  - function_body_length
+  - type_body_length
+  - file_length
+  - cyclomatic_complexity
+  - large_tuple
+  - todo
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - redundant_nil_coalescing
+  - unused_optional_binding
+trailing_whitespace:
+  ignores_empty_lines: true
