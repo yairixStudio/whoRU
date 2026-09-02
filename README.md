@@ -12,11 +12,9 @@ whoRU is a small menu-bar app for macOS. When a permission dialog appears, whoRU
 
 whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yours.
 
-![The whoRU companion panel next to a macOS permission dialog](docs/images/companion-mock.png)
+<img src="docs/images/live-downloads-prompt.png" width="600" alt="A real macOS permission dialog for whoRU itself, with the whoRU companion panel beside it showing the verdict and evidence rows">
 
-The real panel, checking Google Chrome on macOS 26 while the AI reads the evidence:
-
-<img src="docs/images/panel-chrome.png" width="320" alt="whoRU panel: Google Chrome, Google LLC, Probably fine, signed by Google LLC and notarized by Apple">
+*A real prompt on macOS, read 22 ms after it appeared. The panel is whoRU's; the dialog is the system's and stays untouched. Design mock: [companion-mock.png](docs/images/companion-mock.png). Checking Chrome: [panel-chrome.png](docs/images/panel-chrome.png).*
 
 
 ## Status
