@@ -258,15 +258,20 @@ public struct TimestampsCheck: EvidenceCheck {
         let signed = await CodeSignature.inspect(path: path).signingTime
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
+        func relative(_ date: Date) -> String {
+            let age = Date().timeIntervalSince(date)
+            if age < 60 { return "just now" }
+            return formatter.localizedString(for: date, relativeTo: Date())
+        }
         var parts: [String] = []
         var facts: [String: String] = [:]
         let iso = ISO8601DateFormatter()
         if let created {
-            parts.append("created \(formatter.localizedString(for: created, relativeTo: Date()))")
+            parts.append("created \(relative(created))")
             facts[Fact.createdAt] = iso.string(from: created)
         }
-        if let modified { parts.append("modified \(formatter.localizedString(for: modified, relativeTo: Date()))") }
-        if let signed { parts.append("signed \(formatter.localizedString(for: signed, relativeTo: Date()))") }
+        if let modified { parts.append("modified \(relative(modified))") }
+        if let signed { parts.append("signed \(relative(signed))") }
         let brandNew = created.map { Date().timeIntervalSince($0) < 600 } ?? false
         let status: EvidenceStatus = (brandNew && context.prompt.service.isSensitive) ? .warn : .info
         return EvidenceItem(key: key, status: status, weight: weight,

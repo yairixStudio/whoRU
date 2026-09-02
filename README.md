@@ -28,10 +28,11 @@ Early, working, unreleased. Built in the open from the [design document](docs/DE
 - [x] Requester resolver (dialog name → file on disk, with collision handling)
 - [x] Command-line scanner (`whoru-cli`)
 - [x] AI analysts: Claude API (streaming, structured output, bounded tools), Claude Code headless, local Ollama-style model; verdict validator that enforces the evidence contract in code
-- [x] Dialog watcher (Accessibility) and the companion panel (Liquid Glass, non-activating, follows the dialog)
+- [x] Dialog watcher (window list + Accessibility, independent of which system process draws the dialog) and the companion panel (Liquid Glass, non-activating, follows the dialog)
 - [x] Onboarding, settings, history, verdict cache, publisher trust list
-- [x] App bundle script, ad-hoc signing, CI
-- [ ] Live validation of the watcher against every TCC dialog type on macOS 26 (needs testers: see [issues](https://github.com/yairixStudio/whoRU/issues))
+- [x] App bundle script, signing, CI
+- [x] First live run: a real Downloads-folder prompt on a macOS 27 beta was read in 22 ms and the panel appeared beside it
+- [ ] Live validation against every TCC dialog type and more Macs (needs testers: see [issues](https://github.com/yairixStudio/whoRU/issues))
 - [ ] Hebrew and other dialog fixtures
 - [ ] Developer ID signing, notarization, Sparkle updates, Homebrew cask
 - [ ] Full Disk Access path that fills the user’s decision in automatically
