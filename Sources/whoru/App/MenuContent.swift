@@ -27,9 +27,7 @@ struct MenuContent: View {
         }
         Divider()
         Text(model.accessibilityGranted ? model.engineDescription : "Accessibility permission needed")
-        if !model.accessibilityGranted {
-            Button("Set Up whoRU…") { AppDelegate.shared?.showOnboarding() }
-        }
+        Button("Setup Assistant…") { AppDelegate.shared?.showOnboarding() }
         SettingsLink { Text("Settings…") }
             .keyboardShortcut(",")
         Divider()

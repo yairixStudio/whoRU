@@ -28,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         model.applyLaunchAtLogin()
-        if !model.settings.onboardingCompleted || !AccessibilityPermission.isGranted {
+        if !model.settings.onboardingCompleted || !AccessibilityPermission.isGranted || CommandLine.arguments.contains("--onboarding") {
             showOnboarding()
         }
         startWatcherIfPossible()
