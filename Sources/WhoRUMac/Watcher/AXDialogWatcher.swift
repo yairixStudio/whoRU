@@ -1,7 +1,10 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import OSLog
 import WhoRUCore
+
+private let log = Logger(subsystem: WhoRUMac.bundleIdentifier, category: "watcher")
 
 /// Watches the process that draws permission dialogs and reports each new
 /// window's text and frame. Uses only the public Accessibility API: it reads,
@@ -74,7 +77,11 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard observers[pid] == nil else { return }
         var observer: AXObserver?
         let status = AXObserverCreate(pid, axCallback, &observer)
-        guard status == .success, let observer else { return }
+        guard status == .success, let observer else {
+            log.error("could not observe pid \(pid, privacy: .public): AXError \(status.rawValue, privacy: .public)")
+            return
+        }
+        log.info("attached to pid \(pid, privacy: .public)")
         let refcon = Unmanaged.passUnretained(self).toOpaque()
         let app = AXUIElementCreateApplication(pid)
         AXObserverAddNotification(observer, app, kAXWindowCreatedNotification as CFString, refcon)
@@ -96,6 +103,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     // MARK: Windows
 
     fileprivate func handleNotification(_ name: String, element: AXUIElement) {
+        log.debug("AX notification \(name, privacy: .public)")
         switch name {
         case kAXWindowCreatedNotification:
             if let pid = pid(of: element) { handleWindow(element, pid: pid) }
@@ -127,13 +135,20 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         let texts = staticTexts(in: window)
         let buttons = buttonTitles(in: window)
         let (title, body) = Self.pickTitleAndBody(texts)
+        log.info("window in pid \(pid, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, title \(title, privacy: .public)")
         continuation.yield(.appeared(DialogInstance(id: id, pid: pid, frame: frame, title: title, body: body, buttons: buttons)))
     }
 
     /// Polling fallback for the case where AX notifications are late or missing.
+    private var lastWindowCounts: [pid_t: Int] = [:]
+
     private func poll() {
         for pid in observers.keys {
             let current = windows(of: pid)
+            if lastWindowCounts[pid] != current.count {
+                lastWindowCounts[pid] = current.count
+                log.info("pid \(pid, privacy: .public) now has \(current.count, privacy: .public) AX windows")
+            }
             for window in current { handleWindow(window, pid: pid) }
             for (id, entry) in knownWindows where entry.pid == pid {
                 if !current.contains(where: { CFEqual($0, entry.element) }) {
