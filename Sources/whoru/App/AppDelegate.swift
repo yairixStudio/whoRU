@@ -28,6 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showOnboarding()
         }
         startWatcherIfPossible()
+        // `open whoRU.app --args --scan <path>` opens a standalone panel at once (development, screenshots).
+        let args = CommandLine.arguments
+        if let index = args.firstIndex(of: "--scan"), index + 1 < args.count {
+            let service = args.firstIndex(of: "--service").flatMap { $0 + 1 < args.count ? PermissionService(shortName: args[$0 + 1]) : nil } ?? .other
+            scanManually((args[index + 1] as NSString).expandingTildeInPath, service: service)
+        }
         // Accessibility can be granted while we run; pick it up without a restart.
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in

@@ -193,10 +193,13 @@ final class AppModel {
 
     // MARK: Login item
 
+    /// Registered only once onboarding is done, so a build run from a scratch
+    /// folder does not become a login item.
     func applyLaunchAtLogin() {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let service = SMAppService.mainApp
-        if settings.launchAtLogin {
+        let wanted = settings.launchAtLogin && settings.onboardingCompleted
+        if wanted {
             if service.status != .enabled { try? service.register() }
         } else if service.status == .enabled {
             try? service.unregister()
