@@ -90,10 +90,15 @@ Signed builds are not published yet. Building from source takes a minute and nee
 ```sh
 git clone https://github.com/yairixStudio/whoRU.git
 cd whoRU
-scripts/build-app.sh          # → build/whoRU.app (signed with your certificate if you have one, else ad-hoc)
+scripts/build-app.sh          # → build/whoRU.app with the CLI inside (signed with your certificate if you have one, else ad-hoc)
 open build/whoRU.app
+scripts/make-pkg.sh           # → build/whoRU-<version>.pkg: the one file for a download page
 scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applications
 ```
+
+The package installs the app into Applications, links `whoru` into `/usr/local/bin`, quits an older copy first and opens the new one when it is done, so the setup assistant appears right away. It refuses to run on anything older than macOS 26.
+
+For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile (`xcrun notarytool store-credentials whoru-notary …`). The scripts pick all three up from the Keychain by themselves and say what is missing at the end.
 
 First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out, an API key, or none.
 

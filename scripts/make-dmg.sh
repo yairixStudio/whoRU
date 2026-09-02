@@ -38,5 +38,6 @@ if [ -n "${IDENTITY:-}" ]; then
 fi
 
 rm -rf "$STAGE"
+scripts/notarize.sh "$DMG"
 ls -la "$DMG"
 echo "✓ $DMG"

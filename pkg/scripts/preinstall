@@ -1,0 +1,5 @@
+#!/bin/sh
+# whoRU installer, before copying: quit a running copy so the new one can
+# replace it cleanly. Nothing else; settings and history stay where they are.
+/usr/bin/pkill -x whoRU 2>/dev/null || true
+exit 0

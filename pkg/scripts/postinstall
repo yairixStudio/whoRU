@@ -1,0 +1,21 @@
+#!/bin/sh
+# whoRU installer, after copying: put the command-line tool on the PATH and
+# open the app for the person who is logged in, so first-run setup starts
+# at once. Runs as root; $2 is the volume the package was installed on.
+set -u
+VOLUME="${2%/}"
+APP="$VOLUME/Applications/whoRU.app"
+
+if [ -x "$APP/Contents/MacOS/whoru-cli" ]; then
+  /bin/mkdir -p /usr/local/bin 2>/dev/null || true
+  /bin/ln -sfn "$APP/Contents/MacOS/whoru-cli" /usr/local/bin/whoru 2>/dev/null || true
+fi
+
+CONSOLE_USER="$(/usr/bin/stat -f %Su /dev/console 2>/dev/null || echo "")"
+if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+  CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || echo "")"
+  if [ -n "$CONSOLE_UID" ]; then
+    /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -u "$CONSOLE_USER" /usr/bin/open "$APP" >/dev/null 2>&1 || true
+  fi
+fi
+exit 0

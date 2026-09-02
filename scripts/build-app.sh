@@ -36,6 +36,14 @@ echo "▸ assembling $APP"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/whoRU"
+# The command-line tool travels inside the app; the installer package links
+# it into /usr/local/bin.
+echo "▸ swift build -c $CONFIG --product whoru-cli"
+if swift build -c "$CONFIG" --product whoru-cli >>"$BUILD_LOG" 2>&1 && [ -x ".build/$CONFIG/whoru-cli" ]; then
+  cp ".build/$CONFIG/whoru-cli" "$APP/Contents/MacOS/whoru-cli"
+else
+  echo "  (command-line tool not built; the app works without it)"
+fi
 # SwiftPM resource bundles, if any target declares resources.
 for bundle in ".build/$CONFIG"/whoRU_*.bundle; do
   [ -d "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
@@ -76,9 +84,14 @@ EOF
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "▸ codesign ($IDENTITY)"
-if [ "$IDENTITY" = "-" ]; then
-  codesign --force --sign - --options runtime --timestamp=none "$APP"
-else
-  codesign --force --sign "$IDENTITY" --options runtime --timestamp "$APP"
-fi
+# Nested executables first, then the bundle; never --deep.
+sign() {
+  if [ "$IDENTITY" = "-" ]; then
+    codesign --force --sign - --options runtime --timestamp=none "$1"
+  else
+    codesign --force --sign "$IDENTITY" --options runtime --timestamp "$1"
+  fi
+}
+[ -x "$APP/Contents/MacOS/whoru-cli" ] && sign "$APP/Contents/MacOS/whoru-cli"
+sign "$APP"
 codesign --verify --strict "$APP" && echo "✓ $APP"

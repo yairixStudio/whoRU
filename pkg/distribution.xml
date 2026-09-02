@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Installer definition for whoRU-<version>.pkg; scripts/make-pkg.sh fills in @VERSION@ and @ARCHS@. -->
+<installer-gui-script minSpecVersion="2">
+    <title>whoRU</title>
+    <organization>com.yairixstudio</organization>
+    <domains enable_localSystem="true"/>
+    <options customize="never" rootVolumeOnly="true" hostArchitectures="@ARCHS@"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="26.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default">
+            <line choice="whoru"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="whoru" visible="false" title="whoRU">
+        <pkg-ref id="com.yairixstudio.whoru"/>
+    </choice>
+    <pkg-ref id="com.yairixstudio.whoru" version="@VERSION@" onConclusion="none">whoRU-component.pkg</pkg-ref>
+</installer-gui-script>
