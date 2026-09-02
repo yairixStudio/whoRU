@@ -18,6 +18,8 @@ struct MenuContent: View {
         Button("History…") { AppDelegate.shared?.showHistory() }
             .keyboardShortcut("h", modifiers: [.command, .option])
         Button("Check a File…") { AppDelegate.shared?.showManualScan() }
+        Button("Show a Test Dialog") { AppDelegate.shared?.triggerDemoPrompt() }
+            .disabled(!model.accessibilityGranted)
         if model.isPaused {
             Button("Resume Watching") { model.pausedUntil = nil }
         } else {

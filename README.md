@@ -14,6 +14,11 @@ whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yo
 
 ![The whoRU companion panel next to a macOS permission dialog](docs/images/companion-mock.png)
 
+The real panel, checking Google Chrome on macOS 26 while the AI reads the evidence:
+
+<img src="docs/images/panel-chrome.png" width="320" alt="whoRU panel: Google Chrome, Google LLC, Probably fine, signed by Google LLC and notarized by Apple">
+
+
 ## Status
 
 Early, working, unreleased. Built in the open from the [design document](docs/DESIGN.md).
