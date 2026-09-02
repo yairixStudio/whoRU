@@ -25,7 +25,21 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
     case bluetooth = "BluetoothAlways"
     case speechRecognition = "SpeechRecognition"
     case location = "Location"
+    /// Not TCC: the keychain's own dialog, "X wants to access key “Y” in your
+    /// keychain". Who X is matters just as much.
+    case keychain = "Keychain"
+    /// Not TCC: the authorization dialog, "X wants to make changes".
+    case adminRights = "AdminRights"
     case other = "Other"
+
+    /// The name in the system's own log of the request, for services the
+    /// system keeps in TCC; `nil` for the keychain and authorization dialogs.
+    public var tccServiceName: String? {
+        switch self {
+        case .keychain, .adminRights, .other: nil
+        default: "kTCCService" + rawValue
+        }
+    }
 
     /// Short identifier used on the command line and in settings, e.g. `downloadsFolder`.
     public var shortName: String {
@@ -49,6 +63,8 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
         case .bluetooth: "bluetooth"
         case .speechRecognition: "speechRecognition"
         case .location: "location"
+        case .keychain: "keychain"
+        case .adminRights: "adminRights"
         case .other: "other"
         }
     }
@@ -64,7 +80,7 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
     /// without an obvious need should lower confidence.
     public var isSensitive: Bool {
         switch self {
-        case .fullDiskAccess, .screenCapture, .inputMonitoring, .accessibility, .camera, .microphone:
+        case .fullDiskAccess, .screenCapture, .inputMonitoring, .accessibility, .camera, .microphone, .keychain, .adminRights:
             true
         default:
             false

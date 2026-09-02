@@ -64,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in
                 guard let self else { return }
                 let granted = AccessibilityPermission.isGranted
+                if granted { AccessibilityPermission.noteGranted() }
                 if granted != self.model.accessibilityGranted {
                     self.model.accessibilityGranted = granted
                     AppLog.shared.info("app", "accessibility \(granted ? "granted" : "revoked")")

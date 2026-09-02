@@ -91,6 +91,20 @@
     "expected": { "requester": "Unknown Thing", "service": "other" }
   },
   {
+    "title": "productbuild wants to access key “whoRU-installer” in your keychain.",
+    "body": "To allow this, enter the “login” keychain password.",
+    "expected": { "requester": "productbuild", "service": "keychain" }
+  },
+  {
+    "title": "Mail wants to use your confidential information stored in “imap.example.com” in your keychain.",
+    "expected": { "requester": "Mail", "service": "keychain" }
+  },
+  {
+    "title": "Terminal wants to make changes.",
+    "body": "Enter your password to allow this.",
+    "expected": { "requester": "Terminal", "service": "adminRights" }
+  },
+  {
     "title": "Some notification that is not a permission prompt",
     "expected": null
   }

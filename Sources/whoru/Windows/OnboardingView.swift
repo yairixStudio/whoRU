@@ -12,6 +12,7 @@ struct OnboardingView: View {
 
     @State private var step: Step = .move
     @State private var accessibilityGranted = AccessibilityPermission.isGranted
+    @State private var accessibilityState = AccessibilityPermission.state
     @State private var agents: [AgentStatus] = []
     @State private var detecting = true
     @State private var engineChoice: EngineChoice = .none
@@ -55,20 +56,20 @@ struct OnboardingView: View {
                          text: "To see when macOS asks, whoRU needs the Accessibility permission. It only reads the text of permission dialogs. It never clicks anything.",
                          tint: accessibilityGranted ? .green : .accentColor)
                 if !accessibilityGranted {
+                    // No system prompt is ever shown: it cannot be closed and
+                    // stays after the grant. The pane opens directly instead,
+                    // and this step completes by itself once the switch is on.
                     VStack(spacing: 6) {
-                        Text("Already switched on in System Settings, but still stuck here? That entry belongs to an earlier build of whoRU. Reset it and switch it on again.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Reset the permission and ask again") {
-                            Task {
-                                await AccessibilityPermission.resetAndAskAgain()
-                                AccessibilityPermission.openSystemSettings()
-                            }
+                        if accessibilityState == .stale {
+                            Text("System Settings shows whoRU as on, but that entry belongs to an earlier build and macOS ignores it. Reset it, then add whoRU again with the + button.")
+                        } else {
+                            Text("In System Settings, switch whoRU on in the Accessibility list. If it is not listed, press + and choose whoRU in Applications. This step continues on its own.")
                         }
-                        .controlSize(.small)
                     }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
                     .padding(.bottom, 8)
                 }
@@ -206,11 +207,18 @@ struct OnboardingView: View {
             case .accessibility:
                 if accessibilityGranted {
                     Button("Continue") { goForward() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                } else {
-                    Button("Open System Settings") {
-                        _ = AccessibilityPermission.requestWithSystemPrompt()
-                        AccessibilityPermission.openSystemSettings()
+                } else if accessibilityState == .stale {
+                    Button("Open System Settings") { AccessibilityPermission.openSystemSettings() }
+                    Button("Reset and Add Again") {
+                        Task {
+                            await AccessibilityPermission.reset()
+                            accessibilityState = AccessibilityPermission.state
+                            AccessibilityPermission.openSystemSettings()
+                        }
                     }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Open System Settings") { AccessibilityPermission.openSystemSettings() }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                 }
             case .ai:
                 Button("Continue") { commitEngine(); goForward() }
@@ -258,6 +266,8 @@ struct OnboardingView: View {
     private func pollAccessibility() async {
         while !Task.isCancelled {
             let granted = AccessibilityPermission.isGranted
+            if granted { AccessibilityPermission.noteGranted() }
+            accessibilityState = AccessibilityPermission.state
             if granted != accessibilityGranted {
                 withAnimation { accessibilityGranted = granted }
                 if granted, step == .accessibility {

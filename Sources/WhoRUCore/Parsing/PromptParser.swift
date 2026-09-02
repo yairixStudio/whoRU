@@ -56,6 +56,9 @@ public struct PromptParser: Sendable {
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] would like access to (.+?)\.?$"#),
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] wants access to (.+?)\.?$"#),
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] is requesting (.+?)\.?$"#),
+        // The keychain's and the authorization dialogs name the program without quotes.
+        PromptPattern(locale: "en", regex: #"^(.+?) wants to ((?:access|use) (?:key|your confidential information stored in) [“"].+?[”"] in your keychain)\.?$"#, service: .keychain),
+        PromptPattern(locale: "en", regex: #"^(.+?) wants to (make changes)\.?$"#, service: .adminRights),
         // Generic: a quoted name followed by anything, in any language that quotes the requester.
         PromptPattern(locale: "*", regex: #"^[“"״„«](.+?)[”"״“»]\s+(.+)$"#),
     ]
@@ -118,6 +121,8 @@ public struct PromptParser: Sendable {
         (.photos, ["photos", "photo library"]),
         (.bluetooth, ["bluetooth"]),
         (.location, ["location"]),
+        (.keychain, ["keychain"]),
+        (.adminRights, ["make changes"]),
     ]
 
     public static func service(forPhrase phrase: String) -> PermissionService {

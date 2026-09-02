@@ -321,7 +321,7 @@ final class AppModel {
     /// to its buttons only when nothing is found.
     func detectDecision(for session: ScanSession) {
         guard session.decisionLookup == .idle else { return }
-        guard session.dialog != nil, !session.isManual, session.decision == .unknown, session.prompt.service != .other else {
+        guard session.dialog != nil, !session.isManual, session.decision == .unknown, session.prompt.service.tccServiceName != nil else {
             session.decisionLookup = .notFound
             return
         }

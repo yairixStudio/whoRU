@@ -170,7 +170,7 @@ public enum TCCDecisionLookup {
 
     public static func decision(service: PermissionService, subject: Subject?, requesterName: String, since: Date,
                                 looks: [Duration] = lookSchedule) async -> Match? {
-        guard service != .other else { return nil }
+        guard service.tccServiceName != nil else { return nil }
         let windowStart = since.addingTimeInterval(-5)
         let start = Self.startFormatter.string(from: windowStart)
         let predicate = #"process == "tccd" AND category == "access" AND eventMessage BEGINSWITH "AUTHREQ_""#
@@ -200,7 +200,7 @@ public enum TCCDecisionLookup {
     /// program; failing that, the only answer for the permission in the
     /// window when the log names no program at all.
     public static func match(_ events: [TCCAuthEvent], service: PermissionService, subject: Subject?, requesterName: String, since: Date) -> TCCAuthEvent? {
-        let wanted = "kTCCService" + service.rawValue
+        guard let wanted = service.tccServiceName else { return nil }
         let answers = events.filter { event in
             event.isUserAnswer && event.decision != nil && (event.timestamp.map { $0 >= since } ?? true)
         }
