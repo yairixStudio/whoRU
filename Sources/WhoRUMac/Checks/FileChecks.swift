@@ -233,6 +233,7 @@ public struct DeclarationsCheck: EvidenceCheck {
         case .location: key.hasPrefix("NSLocation")
         case .speechRecognition: key == "NSSpeechRecognitionUsageDescription"
         case .bluetooth: key.hasPrefix("NSBluetooth")
+        case .localNetwork: key == "NSLocalNetworkUsageDescription"
         case .desktopFolder: key == "NSDesktopFolderUsageDescription"
         case .documentsFolder: key == "NSDocumentsFolderUsageDescription"
         case .downloadsFolder: key == "NSDownloadsFolderUsageDescription"

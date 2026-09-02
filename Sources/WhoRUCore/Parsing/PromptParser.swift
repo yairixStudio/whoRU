@@ -56,6 +56,8 @@ public struct PromptParser: Sendable {
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] would like access to (.+?)\.?$"#),
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] wants access to (.+?)\.?$"#),
         PromptPattern(locale: "en", regex: #"^[“"](.+?)[”"] is requesting (.+?)\.?$"#),
+        // Newer wording (macOS 27+) puts "Allow" before the quoted requester, e.g. Bluetooth prompts.
+        PromptPattern(locale: "en", regex: #"^Allow [“"](.+?)[”"] to (.+?)[.?]?$"#),
         // The keychain's and the authorization dialogs name the program without quotes.
         PromptPattern(locale: "en", regex: #"^(.+?) wants to ((?:access|use) (?:key|your confidential information stored in) [“"].+?[”"] in your keychain)\.?$"#, service: .keychain),
         PromptPattern(locale: "en", regex: #"^(.+?) wants to (make changes)\.?$"#, service: .adminRights),
@@ -120,6 +122,7 @@ public struct PromptParser: Sendable {
         (.reminders, ["reminders"]),
         (.photos, ["photos", "photo library"]),
         (.bluetooth, ["bluetooth"]),
+        (.localNetwork, ["local network"]),
         (.location, ["location"]),
         (.keychain, ["keychain"]),
         (.adminRights, ["make changes"]),

@@ -25,6 +25,7 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
     case bluetooth = "BluetoothAlways"
     case speechRecognition = "SpeechRecognition"
     case location = "Location"
+    case localNetwork = "LocalNetwork"
     /// Not TCC: the keychain's own dialog, "X wants to access key “Y” in your
     /// keychain". Who X is matters just as much.
     case keychain = "Keychain"
@@ -63,6 +64,7 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
         case .bluetooth: "bluetooth"
         case .speechRecognition: "speechRecognition"
         case .location: "location"
+        case .localNetwork: "localNetwork"
         case .keychain: "keychain"
         case .adminRights: "adminRights"
         case .other: "other"

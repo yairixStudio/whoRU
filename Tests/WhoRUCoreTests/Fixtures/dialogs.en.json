@@ -55,6 +55,16 @@
     "expected": { "requester": "Some App", "service": "bluetooth" }
   },
   {
+    "title": "Allow “Mousely” to use Bluetooth?",
+    "body": "Mousely uses Bluetooth to find and connect to your phone.",
+    "expected": { "requester": "Mousely", "service": "bluetooth" }
+  },
+  {
+    "title": "Allow “Mousely” to find devices on local networks?",
+    "body": "Mousely uses your local network for its fastest connection to your phone. Bluetooth stays available.",
+    "expected": { "requester": "Mousely", "service": "localNetwork" }
+  },
+  {
     "title": "“Some App” would like to access speech recognition.",
     "expected": { "requester": "Some App", "service": "speechRecognition" }
   },
