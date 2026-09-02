@@ -1,0 +1,8 @@
+[
+  {
+    "_comment": "Hebrew wording has not been captured from a live dialog yet. This case only checks that a quoted requester is extracted by the generic pattern. Replace with real fixtures; see CONTRIBUTING.md → Dialog fixtures.",
+    "title": "״Google Chrome״ מבקש לגשת לקבצים בתיקיית ההורדות שלך.",
+    "expected": { "requester": "Google Chrome", "service": "other" },
+    "pending": true
+  }
+]

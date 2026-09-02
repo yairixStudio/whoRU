@@ -1,0 +1,97 @@
+[
+  {
+    "title": "“2.1.258” would like to access files on a network volume.",
+    "body": null,
+    "expected": { "requester": "2.1.258", "service": "networkVolumes" }
+  },
+  {
+    "title": "“Google Chrome” would like to access files in your Downloads folder.",
+    "body": "Chrome needs this to save downloaded files.",
+    "expected": { "requester": "Google Chrome", "service": "downloadsFolder" }
+  },
+  {
+    "title": "\"Terminal\" would like to access files in your Documents folder.",
+    "expected": { "requester": "Terminal", "service": "documentsFolder" }
+  },
+  {
+    "title": "“Zoom” would like to access the camera.",
+    "expected": { "requester": "Zoom", "service": "camera" }
+  },
+  {
+    "title": "“zoom.us” would like to access the microphone.",
+    "expected": { "requester": "zoom.us", "service": "microphone" }
+  },
+  {
+    "title": "“Terminal” wants access to control “System Events”.",
+    "body": "Allowing control will provide access to documents and data in “System Events”, and to perform actions within that app.",
+    "expected": { "requester": "Terminal", "service": "appleEvents", "target": "System Events" }
+  },
+  {
+    "title": "“Some App” would like to access your contacts.",
+    "expected": { "requester": "Some App", "service": "contacts" }
+  },
+  {
+    "title": "“Some App” would like to access your calendar.",
+    "expected": { "requester": "Some App", "service": "calendar" }
+  },
+  {
+    "title": "“Some App” would like to access your reminders.",
+    "expected": { "requester": "Some App", "service": "reminders" }
+  },
+  {
+    "title": "“Some App” would like to access your photos.",
+    "expected": { "requester": "Some App", "service": "photos" }
+  },
+  {
+    "title": "“Some App” would like to access files on a removable volume.",
+    "expected": { "requester": "Some App", "service": "removableVolumes" }
+  },
+  {
+    "title": "“Some App” would like to access files in your Desktop folder.",
+    "expected": { "requester": "Some App", "service": "desktopFolder" }
+  },
+  {
+    "title": "“Some App” would like to use Bluetooth.",
+    "expected": { "requester": "Some App", "service": "bluetooth" }
+  },
+  {
+    "title": "“Some App” would like to access speech recognition.",
+    "expected": { "requester": "Some App", "service": "speechRecognition" }
+  },
+  {
+    "title": "“Some App” would like to use your location.",
+    "expected": { "requester": "Some App", "service": "location" }
+  },
+  {
+    "title": "“Some App” would like to receive keystrokes from any application.",
+    "expected": { "requester": "Some App", "service": "inputMonitoring" }
+  },
+  {
+    "title": "“Some App” would like to record this computer’s screen and audio.",
+    "expected": { "requester": "Some App", "service": "screenCapture" }
+  },
+  {
+    "title": "“Some App” would like to control this computer using accessibility features.",
+    "expected": { "requester": "Some App", "service": "accessibility" }
+  },
+  {
+    "title": "“My App With Spaces” would like to access files in your Downloads folder",
+    "expected": { "requester": "My App With Spaces", "service": "downloadsFolder" }
+  },
+  {
+    "title": "“; rm -rf ~” would like to access files in your Downloads folder.",
+    "expected": { "requester": "; rm -rf ~", "service": "downloadsFolder" }
+  },
+  {
+    "title": "“App “Quoted” Name” would like to access the camera.",
+    "expected": { "requester": "App “Quoted” Name", "service": "camera" }
+  },
+  {
+    "title": "“Unknown Thing” would like to do something new.",
+    "expected": { "requester": "Unknown Thing", "service": "other" }
+  },
+  {
+    "title": "Some notification that is not a permission prompt",
+    "expected": null
+  }
+]
