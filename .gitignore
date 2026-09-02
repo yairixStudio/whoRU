@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Generated Xcode project (run `xcodegen` to recreate)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# App bundle output
+build/
+dist/
+
+# Local secrets and scratch
+.env
+*.local.json
