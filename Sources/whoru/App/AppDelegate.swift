@@ -44,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showSettings() }
         }
+        if args.contains("--demo") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.triggerDemoPrompt() }
+        }
         if let index = args.firstIndex(of: "--scan"), index + 1 < args.count {
             let service = args.firstIndex(of: "--service").flatMap { $0 + 1 < args.count ? PermissionService(shortName: args[$0 + 1]) : nil } ?? .other
             scanManually((args[index + 1] as NSString).expandingTildeInPath, service: service)
@@ -225,14 +228,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Triggers a real permission dialog for whoRU itself, so the panel appears
     /// next to a genuine prompt. Requires a bundle identifier (a built .app).
+    ///
+    /// The file access must happen off the main thread: macOS blocks the
+    /// calling thread until the user answers, and a blocked main thread would
+    /// freeze the app, including the watcher that shows the panel.
     func triggerDemoPrompt() {
-        Task {
-            if let bundleID = Bundle.main.bundleIdentifier {
+        let bundleID = Bundle.main.bundleIdentifier
+        Task.detached(priority: .userInitiated) {
+            if let bundleID {
                 _ = try? await Command.run("/usr/bin/tccutil", ["reset", "SystemPolicyDownloadsFolder", bundleID], timeout: .seconds(5))
             }
             // Touching Downloads is what makes macOS ask.
-            let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            if let downloads {
+            if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
                 _ = try? FileManager.default.contentsOfDirectory(at: downloads, includingPropertiesForKeys: nil)
             }
         }
