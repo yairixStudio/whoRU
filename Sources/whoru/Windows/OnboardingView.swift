@@ -48,10 +48,30 @@ struct OnboardingView: View {
         case .move:
             stepView(symbol: "folder.badge.gearshape", title: "Move to Applications", text: "whoRU asks for a permission that is tied to where the app lives. Moving it to the Applications folder first means you grant it once.")
         case .accessibility:
-            stepView(symbol: accessibilityGranted ? "checkmark.circle.fill" : "hand.raised.fill",
-                     title: "Allow Accessibility",
-                     text: "To see when macOS asks, whoRU needs the Accessibility permission. It only reads the text of permission dialogs. It never clicks anything.",
-                     tint: accessibilityGranted ? .green : .accentColor)
+            VStack(spacing: 12) {
+                stepView(symbol: accessibilityGranted ? "checkmark.circle.fill" : "hand.raised.fill",
+                         title: "Allow Accessibility",
+                         text: "To see when macOS asks, whoRU needs the Accessibility permission. It only reads the text of permission dialogs. It never clicks anything.",
+                         tint: accessibilityGranted ? .green : .accentColor)
+                if !accessibilityGranted {
+                    VStack(spacing: 6) {
+                        Text("Already switched on in System Settings, but still stuck here? That entry belongs to an earlier build of whoRU. Reset it and switch it on again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Reset the permission and ask again") {
+                            Task {
+                                await AccessibilityPermission.resetAndAskAgain()
+                                AccessibilityPermission.openSystemSettings()
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+                    .frame(maxWidth: 360)
+                    .padding(.bottom, 8)
+                }
+            }
         case .ai:
             aiStep
         case .tryIt:
