@@ -13,7 +13,9 @@ BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)
 # A real certificate gives the app a stable code requirement, so the
 # Accessibility grant survives rebuilds. Ad-hoc signatures change every build.
 if [ -z "${CODESIGN_IDENTITY:-}" ]; then
-  CODESIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -oE '"(Developer ID Application|Apple Development): [^"]+"' | head -1 | tr -d '"')"
+  # Use the certificate hash, not its name: names can be ambiguous when a
+  # certificate was renewed and both copies are in the Keychain.
+  CODESIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -E '"(Developer ID Application|Apple Development): ' | head -1 | awk '{print $2}')"
 fi
 IDENTITY="${CODESIGN_IDENTITY:--}"
 BUNDLE_ID="com.yairixstudio.whoru"
