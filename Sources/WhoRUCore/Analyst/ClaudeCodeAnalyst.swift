@@ -13,11 +13,27 @@ public struct ClaudeCodeAnalyst: Analyst {
         self.hardTimeout = hardTimeout
     }
 
-    /// Read-only commands only. No rm, no curl, no writes.
+    /// Metadata-only commands. No rm, no curl, no writes, and no file reading:
+    /// the model may inspect signatures and attributes, never contents. The
+    /// first live run showed the model reaching for the Desktop folder, which
+    /// macOS attributes to whoRU; that must not happen.
     public static let allowedTools = [
         "Bash(codesign:*)", "Bash(spctl:*)", "Bash(shasum:*)", "Bash(mdls:*)", "Bash(xattr:*)",
-        "Bash(ps:*)", "Bash(lsof:*)", "Bash(plutil:*)", "Bash(stat:*)", "Bash(file:*)", "Bash(otool:*)", "Read",
+        "Bash(ps:*)", "Bash(lsof:*)", "Bash(plutil:*)", "Bash(stat:*)", "Bash(file:*)", "Bash(otool:*)",
     ]
+
+    /// Explicitly denied even if a future default would allow them.
+    public static let disallowedTools = [
+        "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Glob", "Grep",
+        "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(less:*)", "Bash(cp:*)", "Bash(mv:*)", "Bash(rm:*)", "Bash(curl:*)", "Bash(open:*)", "Bash(find:*)", "Bash(ls:*)",
+    ]
+
+    /// An empty scratch directory so relative paths never touch user data.
+    static var scratchDirectory: String {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("whoru-claude-code", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.path
+    }
 
     /// Well-known install locations, checked in order.
     public static let searchPaths = [
@@ -52,8 +68,9 @@ public struct ClaudeCodeAnalyst: Analyst {
             "-p", prompt,
             "--output-format", "json",
             "--model", request.model,
-            "--append-system-prompt", AnalystPrompt.systemPrompt,
+            "--append-system-prompt", AnalystPrompt.systemPrompt + "\n\nYou may only run the metadata commands you were given, on the paths named in the evidence bundle. Do not read file contents and do not look at the user's other files or folders.",
             "--allowedTools", Self.allowedTools.joined(separator: ","),
+            "--disallowedTools", Self.disallowedTools.joined(separator: ","),
             "--permission-mode", "default",
         ])
         let (text, sessionID, usage) = try Self.parse(output)
@@ -80,6 +97,7 @@ public struct ClaudeCodeAnalyst: Analyst {
             "--resume", sessionID,
             "--output-format", "json",
             "--allowedTools", Self.allowedTools.joined(separator: ","),
+            "--disallowedTools", Self.disallowedTools.joined(separator: ","),
             "--permission-mode", "default",
         ])
         let (text, newSessionID, usage) = try Self.parse(output)
@@ -97,7 +115,7 @@ public struct ClaudeCodeAnalyst: Analyst {
         // Allow running from inside another Claude Code session (development, CI).
         environment["CLAUDECODE"] = nil
         environment["CLAUDE_CODE_ENTRYPOINT"] = nil
-        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: environment)
+        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: environment, workingDirectory: Self.scratchDirectory)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else { throw AnalystError.invalidResponse("claude exited \(output.status): \(output.stderr.prefix(300))") }
         return output

@@ -22,24 +22,25 @@ public struct CommandError: Error, Sendable, CustomStringConvertible {
 /// Runs an external command with an argument array. There is deliberately no
 /// way to pass a shell string: dialog text and file names are hostile input.
 public enum Command {
-    public static func run(_ executable: String, _ arguments: [String], timeout: Duration = .seconds(4), environment: [String: String]? = nil) async throws -> CommandOutput {
+    public static func run(_ executable: String, _ arguments: [String], timeout: Duration = .seconds(4), environment: [String: String]? = nil, workingDirectory: String? = nil) async throws -> CommandOutput {
         guard FileManager.default.isExecutableFile(atPath: executable) else {
             throw CommandError("not executable: \(executable)")
         }
         let timeoutSeconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         return try await Task.detached(priority: .userInitiated) {
-            try runBlocking(executable, arguments, timeoutSeconds: timeoutSeconds, environment: environment)
+            try runBlocking(executable, arguments, timeoutSeconds: timeoutSeconds, environment: environment, workingDirectory: workingDirectory)
         }.value
     }
 
     /// Synchronous body, kept off the async context because pipe reads and
     /// `waitUntilExit` block the thread.
-    private static func runBlocking(_ executable: String, _ arguments: [String], timeoutSeconds: Double, environment: [String: String]?) throws -> CommandOutput {
+    private static func runBlocking(_ executable: String, _ arguments: [String], timeoutSeconds: Double, environment: [String: String]?, workingDirectory: String?) throws -> CommandOutput {
         let started = Date()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         if let environment { process.environment = environment }
+        if let workingDirectory { process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory) }
         let out = Pipe()
         let err = Pipe()
         process.standardOutput = out
