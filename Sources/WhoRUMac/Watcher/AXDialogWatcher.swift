@@ -57,8 +57,9 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard isAuthorized else { throw WatcherError.notAuthorized }
         dispatchPrecondition(condition: .onQueue(.main))
         started = true
-        // Windows already on screen are not prompts we want to answer for; remember them.
-        for info in Self.onScreenWindows() { ignored.insert(info.number) }
+        // Windows already on screen are not new, except prompts from known
+        // dialog processes: a dialog that was open before we started still counts.
+        for info in Self.onScreenWindows() where !isKnownPromptProcess(info.pid) { ignored.insert(info.number) }
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             self?.poll()
         }
@@ -138,26 +139,43 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
 
     private func inspect(_ info: WindowInfo) {
         let started = Date()
+        let known = isKnownPromptProcess(info.pid)
         guard let window = axWindow(pid: info.pid, matching: info.frame) else {
             // Not exposed through AX (yet). Try again on the next poll a few times, then give up.
             retries[info.number, default: 0] += 1
             if retries[info.number, default: 0] > 6 {
-                ignored.insert(info.number)
                 retries[info.number] = nil
-                log.debug("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) has no AX window; ignoring")
+                log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) (layer \(info.layer, privacy: .public)) exposes no AX window")
+                if known {
+                    // Still worth showing: the panel explains that the text could not be read.
+                    emit(info, title: "", body: nil, buttons: [], started: started)
+                } else {
+                    ignored.insert(info.number)
+                }
             }
             return
         }
         retries[info.number] = nil
         let texts = staticTexts(in: window)
+        let buttons = buttonTitles(in: window)
         guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
-            ignored.insert(info.number)
-            log.debug("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, not a prompt")
+            log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, no prompt pattern matched: \(texts.joined(separator: " | "), privacy: .public)")
+            if known {
+                emit(info, title: texts.first ?? "", body: texts.dropFirst().first, buttons: buttons, started: started)
+            } else {
+                ignored.insert(info.number)
+            }
             return
         }
-        let title = texts[index]
-        let body = texts.dropFirst(index + 1).first
-        let buttons = buttonTitles(in: window)
+        emit(info, title: texts[index], body: texts.dropFirst(index + 1).first, buttons: buttons, started: started)
+    }
+
+    private func isKnownPromptProcess(_ pid: pid_t) -> Bool {
+        guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
+        return bundleIdentifiers.contains(bundle)
+    }
+
+    private func emit(_ info: WindowInfo, title: String, body: String?, buttons: [String], started: Date) {
         let id = "\(info.pid)-\(info.number)"
         tracked[info.number] = Tracked(id: id, pid: info.pid, frame: info.frame)
         log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
@@ -173,30 +191,51 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     private func axWindow(pid: pid_t, matching frame: Rect) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         var value: CFTypeRef?
-        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success, let windows = value as? [AXUIElement] {
+        let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        if status == .success, let windows = value as? [AXUIElement] {
             for window in windows {
                 if let f = self.frame(of: window), abs(f.x - frame.x) < 6, abs(f.y - frame.y) < 6, abs(f.width - frame.width) < 6 {
                     return window
                 }
             }
             if windows.count == 1 { return windows[0] }
+            log.info("pid \(pid, privacy: .public): \(windows.count, privacy: .public) AX windows, none at \(Int(frame.x), privacy: .public),\(Int(frame.y), privacy: .public)")
+        } else {
+            log.info("pid \(pid, privacy: .public): AXWindows unavailable (AXError \(status.rawValue, privacy: .public))")
         }
-        // Fallback: hit-test the middle of the window and walk up to its window element.
+        for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            var single: CFTypeRef?
+            if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single {
+                return (single as! AXUIElement)
+            }
+        }
+        // Fallback: hit-test a few points inside the window and walk up to its window element.
         let systemWide = AXUIElementCreateSystemWide()
-        var hit: AXUIElement?
-        let point = CGPoint(x: frame.x + frame.width / 2, y: frame.y + 20)
-        guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success, var element = hit else { return nil }
-        var hops = 0
-        while hops < 12 {
-            hops += 1
-            let role = attribute(kAXRoleAttribute, of: element)
-            if role == kAXWindowRole || role == kAXSheetRole { return element }
-            var parent: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent else { break }
-            element = p as! AXUIElement
+        let points = [
+            CGPoint(x: frame.x + frame.width / 2, y: frame.y + frame.height / 2),
+            CGPoint(x: frame.x + frame.width / 2, y: frame.y + 24),
+            CGPoint(x: frame.x + 24, y: frame.y + frame.height - 24),
+        ]
+        for point in points {
+            var hit: AXUIElement?
+            guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &hit) == .success, var element = hit else { continue }
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
+            var hops = 0
+            while hops < 12 {
+                hops += 1
+                let role = attribute(kAXRoleAttribute, of: element)
+                if role == kAXWindowRole || role == kAXSheetRole { return element }
+                var window: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success, let window {
+                    return (window as! AXUIElement)
+                }
+                var parent: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent else { break }
+                element = p as! AXUIElement
+            }
+            return element
         }
-        var owner: pid_t = 0
-        if AXUIElementGetPid(element, &owner) == .success, owner == pid { return element }
         return nil
     }
 
