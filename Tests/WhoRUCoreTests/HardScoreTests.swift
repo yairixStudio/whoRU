@@ -164,6 +164,41 @@ private let subject = Subject(path: "/Applications/Thing.app/Contents/MacOS/Thin
         #expect(h.title == "Worth a look")
     }
 
+    @Test func headlineMentionsEarlierScansOfTheSameFile() {
+        let result = HardScoreResult(score: .green, reasons: [ScoreReason(code: "signed.notarized", params: ["publisher": "Google LLC"])])
+        let now = Date()
+        let history = HistorySummary(timesSeen: 3, timesAllowed: 2, lastSeen: now.addingTimeInterval(-86400 * 2), lastVerdict: .legitimate,
+                                     sameFileTimes: 2, sameFileLastSeen: now.addingTimeInterval(-86400 * 2), sameFileLastVerdict: .legitimate, sameFileLastDecision: .allowed, publisherName: "Google LLC")
+        let en = composer.headline(for: result, subject: subject, prompt: prompt, locale: "en", history: history, now: now)
+        #expect(en.sentence.contains("Checked 2 times before"))
+        #expect(en.sentence.contains("2 days ago"))
+        #expect(en.sentence.contains("fine"))
+        #expect(en.sentence.hasSuffix("You allowed it then."))
+        let he = composer.headline(for: result, subject: subject, prompt: prompt, locale: "he", history: history, now: now)
+        #expect(he.sentence.contains("נבדק 2 פעמים בעבר"))
+        #expect(he.sentence.hasSuffix("אישרת אותו אז."))
+    }
+
+    @Test func headlineFallsBackToPublisherHistory() {
+        let result = HardScoreResult(score: .amber, reasons: [ScoreReason(code: "unsigned")])
+        let history = HistorySummary(timesSeen: 1, lastSeen: Date().addingTimeInterval(-3600 * 5), lastVerdict: .legitimate, publisherName: "Anthropic PBC")
+        let h = composer.headline(for: result, subject: subject, prompt: prompt, locale: "en", history: history)
+        #expect(h.sentence.contains("Another program from Anthropic PBC was checked 5 hours ago."))
+        #expect(HeadlineComposer.historyClause(HistorySummary(), locale: "en") == nil)
+    }
+
+    @Test func flaggedHistoryIsAnAmberConcernNotRed() {
+        let engine = HardScoreEngine()
+        let evidence = [item(.signerIdentity, [Fact.signerKind: "developerID", Fact.signerTeamID: "ABC", Fact.signatureValid: "true"]), item(.gatekeeper, [Fact.notarized: "true"])]
+        let history = HistorySummary(sameFileTimes: 1, sameFileLastVerdict: .suspicious)
+        let result = engine.score(evidence, subject: subject, prompt: prompt, history: history)
+        #expect(result.score == .green)
+        #expect(result.reasons.map(\.code).contains("history.flagged"))
+        let denied = engine.score([item(.signerIdentity, [Fact.signerKind: "unsigned"], status: .warn)], subject: subject, prompt: prompt, history: HistorySummary(sameFileTimes: 1, sameFileLastDecision: .denied))
+        #expect(denied.score == .amber)
+        #expect(denied.reasons.map(\.code) == ["unsigned", "history.denied"])
+    }
+
     @Test func presentationMapsHardScore() {
         let system = HardScoreResult(score: .green, reasons: [], isSystemComponent: true)
         #expect(VerdictPresentation.forHardScore(system, locale: "en").symbol == "apple.logo")

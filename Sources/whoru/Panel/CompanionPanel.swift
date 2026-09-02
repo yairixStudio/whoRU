@@ -1,7 +1,9 @@
 import AppKit
 import Observation
+import QuartzCore
 import SwiftUI
 import WhoRUCore
+import WhoRUMac
 
 /// Drives the appear and dismiss motion of a panel, the way system panels
 /// move: a short spring in, scaling from the edge that faces the dialog, and
@@ -29,6 +31,8 @@ final class CompanionPanel: NSPanel {
     private var dialogFrame: Rect?
     private var userOffset: CGPoint?
     private var contentHeight: CGFloat = 150
+    private var displayLink: CADisplayLink?
+    private var followedWindow: Int?
 
     init(session: ScanSession, model: AppModel) {
         self.session = session
@@ -99,6 +103,41 @@ final class CompanionPanel: NSPanel {
         return NSRect(x: x, y: y, width: Self.width, height: height)
     }
 
+    // MARK: Following a dragged dialog
+
+    /// Reads the dialog's bounds once per display refresh and moves the panel
+    /// with `setFrameOrigin`, which changes position only: no layout, no
+    /// redraw, no event queue in between. This is what makes a drag feel
+    /// attached rather than towed.
+    func follow(windowID: Int) {
+        stopFollowing()
+        followedWindow = windowID
+        guard let view = contentView else { return }
+        let link = view.displayLink(target: self, selector: #selector(followTick))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    func stopFollowing() {
+        displayLink?.invalidate()
+        displayLink = nil
+        followedWindow = nil
+    }
+
+    var isFollowing: Bool { displayLink != nil }
+
+    @objc private func followTick() {
+        guard let followedWindow, let bounds = AXDialogWatcher.bounds(ofWindow: followedWindow) else { return }
+        guard bounds != dialogFrame else { return }
+        dialogFrame = bounds
+        let target = targetFrame(besideDialog: bounds, height: currentHeight)
+        if target.size == frame.size {
+            setFrameOrigin(target.origin)
+        } else {
+            setFrame(target, display: true)
+        }
+    }
+
     /// For manual scans with no dialog: top-right of the main screen.
     func placeStandalone() {
         guard let screen = NSScreen.main else { return }
@@ -162,6 +201,7 @@ final class CompanionPanel: NSPanel {
 
     /// Hides it: content fades and shrinks slightly, then the window goes away.
     func fadeOut(completion: (() -> Void)? = nil) {
+        stopFollowing()
         presentation.visible = false
         let delay = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.2
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -172,6 +212,7 @@ final class CompanionPanel: NSPanel {
 
     /// When the dialog closes mid-conversation the panel stays, as a normal window.
     func becomeStandaloneWindow() {
+        stopFollowing()
         styleMask.insert(.titled)
         styleMask.insert(.closable)
         styleMask.insert(.miniaturizable)

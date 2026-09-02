@@ -3,19 +3,36 @@ import Foundation
 /// A short record of earlier scans of the same publisher or file, given to the
 /// model as context. Summaries only, never full conversations.
 public struct HistorySummary: Codable, Sendable, Hashable {
+    /// Scans of the same publisher or the same file.
     public var timesSeen: Int
     public var timesAllowed: Int
     public var timesDenied: Int
     public var lastSeen: Date?
     public var lastVerdict: VerdictKind?
+    /// Scans of this exact file (same hash).
+    public var sameFileTimes: Int
+    /// The most recent scan of this exact file, if any.
+    public var sameFileLastSeen: Date?
+    public var sameFileLastVerdict: VerdictKind?
+    public var sameFileLastDecision: UserDecision?
+    /// Name of the publisher the wider history belongs to.
+    public var publisherName: String?
 
-    public init(timesSeen: Int = 0, timesAllowed: Int = 0, timesDenied: Int = 0, lastSeen: Date? = nil, lastVerdict: VerdictKind? = nil) {
+    public init(timesSeen: Int = 0, timesAllowed: Int = 0, timesDenied: Int = 0, lastSeen: Date? = nil, lastVerdict: VerdictKind? = nil,
+                sameFileTimes: Int = 0, sameFileLastSeen: Date? = nil, sameFileLastVerdict: VerdictKind? = nil, sameFileLastDecision: UserDecision? = nil, publisherName: String? = nil) {
         self.timesSeen = timesSeen
         self.timesAllowed = timesAllowed
         self.timesDenied = timesDenied
         self.lastSeen = lastSeen
         self.lastVerdict = lastVerdict
+        self.sameFileTimes = sameFileTimes
+        self.sameFileLastSeen = sameFileLastSeen
+        self.sameFileLastVerdict = sameFileLastVerdict
+        self.sameFileLastDecision = sameFileLastDecision
+        self.publisherName = publisherName
     }
+
+    public var isEmpty: Bool { timesSeen == 0 && sameFileTimes == 0 }
 }
 
 /// Everything the analyst receives. This is also exactly what “What was sent?”

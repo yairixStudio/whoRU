@@ -66,11 +66,12 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         log.info("polling the window list every \(Int(self.pollInterval * 1000), privacy: .public) ms")
     }
 
-    /// Idle: the configured interval. While a dialog is on screen: fast, so the
-    /// panel follows a dragged dialog at animation rate.
+    /// Idle: the configured interval. While a dialog is on screen: a little
+    /// faster, to notice it closing promptly. Following a dragged dialog is
+    /// the panel's job, at display rate, through `bounds(ofWindow:)`.
     private func schedulePoll() {
         pollTimer?.invalidate()
-        let interval = tracked.isEmpty ? pollInterval : 1.0 / 60.0
+        let interval = tracked.isEmpty ? pollInterval : min(pollInterval, 0.05)
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.poll() }
         timer.tolerance = interval / 4
         RunLoop.main.add(timer, forMode: .common)
@@ -208,7 +209,17 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         tracked[info.number] = Tracked(id: id, pid: info.pid, frame: info.frame)
         log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
         AppLog.shared.info("watcher", "prompt in \(info.owner) (pid \(info.pid), window \(info.number), layer \(info.layer)) read in \(elapsedMs(since: started)) ms: \(title.isEmpty ? "(no text)" : title)")
-        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons)))
+        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons, nativeWindowID: info.number)))
+    }
+
+    /// Current bounds of one window, cheap enough to call every frame.
+    public static func bounds(ofWindow number: Int) -> Rect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(number)) as? [[String: Any]],
+              let w = list.first,
+              let bounds = w[kCGWindowBounds as String] as? [String: Any],
+              let x = bounds["X"] as? Double, let y = bounds["Y"] as? Double,
+              let width = bounds["Width"] as? Double, let height = bounds["Height"] as? Double else { return nil }
+        return Rect(x: x, y: y, width: width, height: height)
     }
 
     private var retries: [Int: Int] = [:]

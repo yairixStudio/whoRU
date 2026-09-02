@@ -70,14 +70,22 @@ public struct HistoryDerivation: EvidenceDerivation {
     public init() {}
 
     public func derive(from evidence: [EvidenceItem], subject: Subject, context: CheckContext) -> EvidenceItem? {
-        guard let history = context.history, history.timesSeen > 0 else {
+        guard let history = context.history, !history.isEmpty else {
             return EvidenceItem(key: .history, status: .info, weight: .medium, summary: "First time seen", method: "history")
         }
-        var parts = ["seen \(history.timesSeen)×"]
+        var parts: [String] = []
+        if history.sameFileTimes > 0 {
+            parts.append("this file \(history.sameFileTimes)×")
+            if let verdict = history.sameFileLastVerdict { parts.append("last verdict \(verdict.rawValue)") }
+            if let decision = history.sameFileLastDecision { parts.append("you \(decision.rawValue) it") }
+        }
+        if history.timesSeen > history.sameFileTimes {
+            parts.append("publisher \(history.timesSeen)×")
+        }
         if history.timesAllowed > 0 { parts.append("allowed \(history.timesAllowed)×") }
         if history.timesDenied > 0 { parts.append("denied \(history.timesDenied)×") }
-        if let verdict = history.lastVerdict { parts.append("last verdict \(verdict.rawValue)") }
-        return EvidenceItem(key: .history, status: history.timesDenied > history.timesAllowed ? .warn : .info, weight: .medium,
+        let flagged = history.sameFileLastVerdict == .suspicious || history.sameFileLastVerdict == .malicious || history.sameFileLastDecision == .denied
+        return EvidenceItem(key: .history, status: flagged ? .warn : .info, weight: .medium,
                             summary: parts.joined(separator: ", "), method: "history")
     }
 }

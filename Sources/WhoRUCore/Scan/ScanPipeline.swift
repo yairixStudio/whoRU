@@ -88,9 +88,9 @@ public struct ScanPipeline: Sendable {
 
         // 2. Collect fast evidence and derivations.
         var evidence: [EvidenceItem] = []
+        var history: HistorySummary?
         if let subject = resolved.subject {
-            let history = try? await env.store?.history(teamID: nil, sha256: nil)
-            var context = CheckContext(prompt: prompt, settings: env.settings, publishers: env.publishers, secrets: env.secrets, history: history)
+            var context = CheckContext(prompt: prompt, settings: env.settings, publishers: env.publishers, secrets: env.secrets, history: nil)
             context.timeout = .seconds(4)
             evidence = await env.collector.collect(subject: subject, context: context, includeSlow: false, onItem: { item in
                 if item.status == .error || item.status == .fail {
@@ -106,6 +106,7 @@ public struct ScanPipeline: Sendable {
             if let store = env.store {
                 let facts = HardScoreEngine.mergedFacts(evidence)
                 if let summary = try? await store.history(teamID: facts[Fact.signerTeamID], sha256: facts[Fact.sha256]) {
+                    history = summary
                     context.history = summary
                     if let index = evidence.firstIndex(where: { $0.key == .history }),
                        let item = HistoryDerivation().derive(from: evidence, subject: subject, context: context) {
@@ -117,9 +118,9 @@ public struct ScanPipeline: Sendable {
         }
         record.evidence = evidence
 
-        // 3. Score and headline.
-        let hard = HardScoreEngine(strictness: env.settings.strictness).score(evidence, subject: resolved.subject, prompt: prompt)
-        let headline = HeadlineComposer().headline(for: hard, subject: resolved.subject, prompt: prompt, locale: env.locale)
+        // 3. Score and headline, both aware of what happened last time.
+        let hard = HardScoreEngine(strictness: env.settings.strictness).score(evidence, subject: resolved.subject, prompt: prompt, history: history)
+        let headline = HeadlineComposer().headline(for: hard, subject: resolved.subject, prompt: prompt, locale: env.locale, history: history)
         record.hardScore = hard
         record.deterministicHeadline = headline
         log.info("scan", "\(scanID) \(hard.score.rawValue.uppercased()) in \(elapsedMs(since: started)) ms: \(headline.title) — \(hard.reasons.map(\.code).joined(separator: ", "))")
@@ -155,7 +156,6 @@ public struct ScanPipeline: Sendable {
         }
 
         // 6. Analyze.
-        let history = try? await env.store?.history(teamID: record.teamID, sha256: record.sha256)
         let bundle = EvidenceBundle(
             prompt: prompt, subject: resolved.subject, candidates: resolved.candidates, evidence: evidence,
             hardScore: hard, history: history, answerLanguage: env.locale

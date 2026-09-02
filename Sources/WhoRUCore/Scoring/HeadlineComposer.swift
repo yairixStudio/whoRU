@@ -6,7 +6,7 @@ import Foundation
 public struct HeadlineComposer: Sendable {
     public init() {}
 
-    public func headline(for result: HardScoreResult, subject: Subject?, prompt: PermissionPrompt, locale: String) -> Headline {
+    public func headline(for result: HardScoreResult, subject: Subject?, prompt: PermissionPrompt, locale: String, history: HistorySummary? = nil, now: Date = Date()) -> Headline {
         let name = subject?.displayName ?? prompt.requesterName
         let first = result.reasons.first
         var params = first?.params ?? [:]
@@ -14,7 +14,8 @@ public struct HeadlineComposer: Sendable {
         params["name"] = params["name"] ?? name
 
         let title: String
-        let sentence: String
+        var sentence: String
+        defer { _ = sentence }
         switch result.score {
         case .red:
             title = L10n.text("headline.doNotAllow", locale: locale)
@@ -39,7 +40,43 @@ public struct HeadlineComposer: Sendable {
                 sentence = L10n.text("reason.\(first?.code ?? "signer.unknown")", locale: locale, params)
             }
         }
+        if let history, let clause = Self.historyClause(history, locale: locale, now: now) {
+            sentence += " " + clause
+        }
         return Headline(title: title, sentence: sentence, source: "deterministic")
+    }
+
+    /// One sentence about earlier scans: this exact file first, else the publisher.
+    public static func historyClause(_ history: HistorySummary, locale: String, now: Date = Date()) -> String? {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: locale)
+        formatter.unitsStyle = .full
+        func when(_ date: Date?) -> String {
+            guard let date else { return "" }
+            if now.timeIntervalSince(date) < 120 { return L10n.text("history.justNow", locale: locale) }
+            return formatter.localizedString(for: date, relativeTo: now)
+        }
+        if history.sameFileTimes > 0 {
+            var params: [String: String] = ["n": String(history.sameFileTimes), "when": when(history.sameFileLastSeen)]
+            let verdictKey: String
+            switch history.sameFileLastVerdict {
+            case .legitimate, .probablyLegitimate: verdictKey = "history.verdict.fine"
+            case .suspicious, .malicious: verdictKey = "history.verdict.flagged"
+            default: verdictKey = "history.verdict.unknown"
+            }
+            params["verdict"] = L10n.text(verdictKey, locale: locale)
+            var text = L10n.text(history.sameFileTimes == 1 ? "history.sameFile.once" : "history.sameFile.many", locale: locale, params)
+            if let decision = history.sameFileLastDecision {
+                text += " " + L10n.text(decision == .allowed ? "history.decision.allowed" : "history.decision.denied", locale: locale)
+            }
+            return text
+        }
+        if history.timesSeen > 0, let publisher = history.publisherName {
+            var params: [String: String] = ["n": String(history.timesSeen), "publisher": publisher]
+            params["when"] = when(history.lastSeen)
+            return L10n.text(history.timesSeen == 1 ? "history.publisher.once" : "history.publisher.many", locale: locale, params)
+        }
+        return nil
     }
 }
 

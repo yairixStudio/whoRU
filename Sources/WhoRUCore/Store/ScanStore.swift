@@ -198,6 +198,16 @@ public actor JSONFileScanStore: ScanStore {
         if let last = matches.max(by: { $0.startedAt < $1.startedAt }) {
             summary.lastSeen = last.startedAt
             summary.lastVerdict = last.verdict?.verdict
+            summary.publisherName = last.evidence.first { $0.key == .publisher }?.facts[Fact.publisherName]
+        }
+        if let sha256 {
+            let same = matches.filter { $0.sha256 == sha256 }
+            summary.sameFileTimes = same.count
+            if let last = same.max(by: { $0.startedAt < $1.startedAt }) {
+                summary.sameFileLastSeen = last.startedAt
+                summary.sameFileLastVerdict = last.verdict?.verdict ?? last.hardScore.map { $0.score == .red ? .malicious : ($0.score == .green ? .probablyLegitimate : .unknown) }
+                summary.sameFileLastDecision = last.userDecision == .unknown ? nil : last.userDecision
+            }
         }
         return summary
     }

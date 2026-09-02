@@ -12,7 +12,7 @@ public struct HardScoreEngine: Sendable {
         self.strictness = strictness
     }
 
-    public func score(_ evidence: [EvidenceItem], subject: Subject?, prompt: PermissionPrompt) -> HardScoreResult {
+    public func score(_ evidence: [EvidenceItem], subject: Subject?, prompt: PermissionPrompt, history: HistorySummary? = nil) -> HardScoreResult {
         let facts = Self.mergedFacts(evidence)
         func fact(_ key: String) -> String? { facts[key] }
 
@@ -59,6 +59,15 @@ public struct HardScoreEngine: Sendable {
         }
         if fact(Fact.locationClass) == "suspicious" {
             concerns.append(ScoreReason(code: "location.suspicious", ref: .location, params: ["location": subject.map { ($0.path as NSString).deletingLastPathComponent } ?? ""]))
+        }
+        // What happened last time with this exact file is a concern the model
+        // should weigh; it is not hard evidence, so it never makes red.
+        if let history, history.sameFileTimes > 0 {
+            if history.sameFileLastVerdict == .malicious || history.sameFileLastVerdict == .suspicious {
+                concerns.insert(ScoreReason(code: "history.flagged", ref: .history), at: 0)
+            } else if history.sameFileLastDecision == .denied {
+                concerns.append(ScoreReason(code: "history.denied", ref: .history))
+            }
         }
 
         // Green: exactly the conditions from the design, plus one curated

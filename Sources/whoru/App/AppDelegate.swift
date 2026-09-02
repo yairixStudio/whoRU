@@ -121,10 +121,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let panel = CompanionPanel(session: session, model: model)
             panel.place(besideDialog: dialog.frame)
             panel.fadeIn()
+            if let windowID = dialog.nativeWindowID { panel.follow(windowID: windowID) }
             panels[dialog.id] = panel
             AppLog.shared.info("app", "panel shown for “\(session.prompt.requesterName)” · \(session.prompt.service.shortName) at \(Int(panel.frame.minX)),\(Int(panel.frame.minY))")
         case .moved(let id, let frame):
-            panels[id]?.place(besideDialog: frame)
+            // The panel follows the window itself at display rate; this is the fallback.
+            if let panel = panels[id], panel.isFollowing == false { panel.place(besideDialog: frame) }
         case .closed(let id):
             log.info("dialog closed: \(id, privacy: .public)")
             guard let panel = panels[id] else { return }
@@ -192,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = CompanionPanel(session: session, model: model)
         if let dialog = session.dialog, !session.dialogClosed {
             panel.place(besideDialog: dialog.frame)
+            if let windowID = dialog.nativeWindowID { panel.follow(windowID: windowID) }
         } else {
             panel.placeStandalone()
         }

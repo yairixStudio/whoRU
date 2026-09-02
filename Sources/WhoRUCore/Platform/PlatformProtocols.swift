@@ -61,14 +61,18 @@ public struct DialogInstance: Sendable, Hashable {
     public var title: String
     public var body: String?
     public var buttons: [String]
+    /// The platform's window handle (CGWindowID on macOS), so a companion can
+    /// follow the window directly at display rate.
+    public var nativeWindowID: Int?
 
-    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = []) {
+    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = [], nativeWindowID: Int? = nil) {
         self.id = id
         self.pid = pid
         self.frame = frame
         self.title = title
         self.body = body
         self.buttons = buttons
+        self.nativeWindowID = nativeWindowID
     }
 }
 
