@@ -64,7 +64,11 @@ final class AppModel {
         }
         Task { await refreshEngineDescription() }
         Task { monthlySpend = (try? await store.monthlySpend()) ?? 0 }
-        Task { try? await store.purge(olderThan: settings.historyRetentionDays) }
+        // Retention 0 means forever.
+        if settings.historyRetentionDays > 0 {
+            let days = settings.historyRetentionDays
+            Task { try? await store.purge(olderThan: days) }
+        }
     }
 
     var isPaused: Bool { pausedUntil.map { $0 > Date() } ?? false }
@@ -83,9 +87,15 @@ final class AppModel {
     func refreshEngineDescription() async {
         let env = await environment()
         if let analyst = env.analyst {
+            func chosen(_ engine: EngineChoice) -> String {
+                let m = settings.model(for: engine)
+                return m.isEmpty ? "default model" : m
+            }
             switch analyst.id {
-            case "claude-code": engineDescription = "Claude Code · \(settings.depth.modelID)"
+            case "claude-code": engineDescription = "Claude Code · \(settings.model(for: .claudeCode).isEmpty ? settings.depth.modelID : chosen(.claudeCode))"
             case "claude-api": engineDescription = "Claude API · \(settings.depth.modelID)"
+            case "codex": engineDescription = "Codex CLI · \(chosen(.codex))"
+            case "gemini": engineDescription = "Gemini CLI · \(chosen(.gemini))"
             case "local": engineDescription = "Local model · \(settings.localModelName)"
             default: engineDescription = analyst.id
             }
@@ -101,10 +111,17 @@ final class AppModel {
     func startScan(for dialog: DialogInstance) -> ScanSession {
         let parser = PromptParser()
         let prompt = parser.makePrompt(title: dialog.title, body: dialog.body)
-            ?? PermissionPrompt(title: dialog.title, body: dialog.body, requesterName: dialog.title, service: .other, requestPhrase: "", locale: "und")
+            ?? PermissionPrompt(title: dialog.title, body: dialog.body, requesterName: dialog.title.isEmpty ? "Unreadable dialog" : dialog.title, service: .other, requestPhrase: "", locale: "und")
         let session = ScanSession(id: dialog.id, dialog: dialog, prompt: prompt, rawTitle: dialog.title)
         sessions.append(session)
         lastSession = session
+        // The same program asking for the same thing again within a minute
+        // (a cascade of prompts, or a re-shown dialog) reuses the scan in flight
+        // instead of starting another model run.
+        if let twin = sessions.first(where: { $0 !== session && $0.prompt.requesterName == prompt.requesterName && $0.prompt.service == prompt.service && Date().timeIntervalSince($0.startedAt) < 60 }) {
+            session.mirror(twin)
+            return session
+        }
         if parser.parse(title: dialog.title) != nil {
             run(session, presetSubject: nil)
         } else {

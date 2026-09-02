@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startWatcherIfPossible()
         // `open whoRU.app --args --scan <path>` opens a standalone panel at once (development, screenshots).
         let args = CommandLine.arguments
+        if args.contains("--settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showSettings() }
+        }
         if let index = args.firstIndex(of: "--scan"), index + 1 < args.count {
             let service = args.firstIndex(of: "--service").flatMap { $0 + 1 < args.count ? PermissionService(shortName: args[$0 + 1]) : nil } ?? .other
             scanManually((args[index + 1] as NSString).expandingTildeInPath, service: service)
@@ -82,11 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let panel = CompanionPanel(session: session, model: model)
-            panel.place(besideDialog: dialog.frame, animated: false)
+            panel.place(besideDialog: dialog.frame)
             panel.fadeIn()
             panels[dialog.id] = panel
         case .moved(let id, let frame):
-            panels[id]?.place(besideDialog: frame, animated: true)
+            panels[id]?.place(besideDialog: frame)
         case .closed(let id):
             log.info("dialog closed: \(id, privacy: .public)")
             guard let panel = panels[id] else { return }
@@ -150,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let panel = CompanionPanel(session: session, model: model)
         if let dialog = session.dialog, !session.dialogClosed {
-            panel.place(besideDialog: dialog.frame, animated: false)
+            panel.place(besideDialog: dialog.frame)
         } else {
             panel.placeStandalone()
         }
@@ -173,6 +176,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         historyWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// The SwiftUI Settings scene, brought to the front even though whoRU is
+    /// an accessory app without a Dock icon.
+    func showSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        DispatchQueue.main.async {
+            NSApp.windows.first { $0.title.localizedCaseInsensitiveContains("settings") || $0.identifier?.rawValue.contains("Settings") == true }?.makeKeyAndOrderFront(nil)
+        }
     }
 
     func showOnboarding() {

@@ -68,6 +68,37 @@ final class ScanSession: Identifiable {
         return .scanning
     }
 
+    /// Shows another session's results as they arrive, for a duplicate prompt.
+    func mirror(_ other: ScanSession) {
+        subject = other.subject
+        candidates = other.candidates
+        evidence = other.evidence
+        hardScore = other.hardScore
+        headline = other.headline
+        verdict = other.verdict
+        analysis = other.analysis
+        record = other.record
+        mirrorTask?.cancel()
+        mirrorTask = Task { [weak self, weak other] in
+            while !Task.isCancelled, let self, let other {
+                if self.verdict != other.verdict || self.evidence.count != other.evidence.count || self.analysis != other.analysis || self.record?.id != other.record?.id {
+                    self.subject = other.subject
+                    self.evidence = other.evidence
+                    self.hardScore = other.hardScore
+                    self.headline = other.headline
+                    self.partialHeadline = other.partialHeadline
+                    self.verdict = other.verdict
+                    self.analysis = other.analysis
+                    self.record = other.record
+                }
+                if other.record?.finishedAt != nil, other.analysis != .thinking { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+    }
+
+    private var mirrorTask: Task<Void, Never>?
+
     func apply(_ event: ScanEvent) {
         switch event {
         case .resolved(let subject, let candidates):

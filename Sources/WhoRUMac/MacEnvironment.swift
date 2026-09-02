@@ -35,15 +35,25 @@ public enum MacEnvironment {
         case .claudeAPI:
             return secrets.secret(.anthropicAPIKey).map { ClaudeAPIAnalyst(apiKey: $0, hardTimeout: .seconds(settings.hardTimeoutSeconds)) }
         case .claudeCode:
-            return (settings.claudeCodePath ?? ClaudeCodeAnalyst.locate()).map { ClaudeCodeAnalyst(executable: $0) }
+            return (settings.claudeCodePath ?? ClaudeCodeAnalyst.locate()).map { ClaudeCodeAnalyst(executable: $0, model: settings.model(for: .claudeCode)) }
+        case .codex:
+            return (settings.codexPath ?? CodexAnalyst.locate()).map { CodexAnalyst(executable: $0, model: settings.model(for: .codex)) }
+        case .gemini:
+            return (settings.geminiPath ?? GeminiAnalyst.locate()).map { GeminiAnalyst(executable: $0, model: settings.model(for: .gemini)) }
         case .local:
             return URL(string: settings.localModelURL).map { LocalModelAnalyst(baseURL: $0, model: settings.localModelName) }
         case .auto:
             if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate(), await ClaudeCodeVerifier.isTrusted(path) {
-                return ClaudeCodeAnalyst(executable: path)
+                return ClaudeCodeAnalyst(executable: path, model: settings.model(for: .claudeCode))
             }
             if let key = secrets.secret(.anthropicAPIKey) {
                 return ClaudeAPIAnalyst(apiKey: key, hardTimeout: .seconds(settings.hardTimeoutSeconds))
+            }
+            if let path = settings.codexPath ?? CodexAnalyst.locate() {
+                return CodexAnalyst(executable: path, model: settings.model(for: .codex))
+            }
+            if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
+                return GeminiAnalyst(executable: path, model: settings.model(for: .gemini))
             }
             return nil
         }

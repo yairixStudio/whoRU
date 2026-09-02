@@ -57,13 +57,24 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard isAuthorized else { throw WatcherError.notAuthorized }
         dispatchPrecondition(condition: .onQueue(.main))
         started = true
+        // AX calls can block when the target app is busy; never wait long on the main thread.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.5)
         // Windows already on screen are not new, except prompts from known
         // dialog processes: a dialog that was open before we started still counts.
         for info in Self.onScreenWindows() where !isKnownPromptProcess(info.pid) { ignored.insert(info.number) }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.poll()
-        }
+        schedulePoll()
         log.info("polling the window list every \(Int(self.pollInterval * 1000), privacy: .public) ms")
+    }
+
+    /// Idle: the configured interval. While a dialog is on screen: fast, so the
+    /// panel follows a dragged dialog at animation rate.
+    private func schedulePoll() {
+        pollTimer?.invalidate()
+        let interval = tracked.isEmpty ? pollInterval : 1.0 / 60.0
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.poll() }
+        timer.tolerance = interval / 4
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
     }
 
     public func stop() {
@@ -104,6 +115,13 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     }
 
     private func poll() {
+        guard started else { return }
+        if !AXIsProcessTrusted() {
+            log.error("Accessibility permission was revoked; stopping")
+            stop()
+            return
+        }
+        let hadTracked = !tracked.isEmpty
         let current = Self.onScreenWindows()
         let currentNumbers = Set(current.map(\.number))
 
@@ -128,6 +146,8 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             guard isCandidate(info) else { ignored.insert(info.number); continue }
             inspect(info)
         }
+
+        if hadTracked != !tracked.isEmpty { schedulePoll() }
     }
 
     /// Cheap pre-filter so only alert-shaped windows are read through AX.
@@ -190,6 +210,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     /// window's centre as a fallback for processes that do not list windows.
     private func axWindow(pid: pid_t, matching frame: Rect) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
         if status == .success, let windows = value as? [AXUIElement] {
@@ -205,7 +226,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         }
         for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
             var single: CFTypeRef?
-            if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single {
+            if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single, CFGetTypeID(single) == AXUIElementGetTypeID() {
                 return (single as! AXUIElement)
             }
         }
@@ -227,11 +248,11 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
                 let role = attribute(kAXRoleAttribute, of: element)
                 if role == kAXWindowRole || role == kAXSheetRole { return element }
                 var window: CFTypeRef?
-                if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success, let window {
+                if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success, let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
                     return (window as! AXUIElement)
                 }
                 var parent: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent else { break }
+                guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent, CFGetTypeID(p) == AXUIElementGetTypeID() else { break }
                 element = p as! AXUIElement
             }
             return element
@@ -245,6 +266,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
               AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
               let positionValue, let sizeValue else { return nil }
+        guard CFGetTypeID(positionValue) == AXValueGetTypeID(), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
         var point = CGPoint.zero
         var size = CGSize.zero
         guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &point), AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }

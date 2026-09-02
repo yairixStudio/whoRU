@@ -6,7 +6,11 @@ import Foundation
 /// the contract between the evidence and the model: red is a floor the model
 /// cannot lift, green is a ceiling it may lower.
 public struct HardScoreEngine: Sendable {
-    public init() {}
+    public let strictness: Strictness
+
+    public init(strictness: Strictness = .standard) {
+        self.strictness = strictness
+    }
 
     public func score(_ evidence: [EvidenceItem], subject: Subject?, prompt: PermissionPrompt) -> HardScoreResult {
         let facts = Self.mergedFacts(evidence)
@@ -84,9 +88,16 @@ public struct HardScoreEngine: Sendable {
         if signerKind == .developerID, signatureValid {
             if fact(Fact.notarized) == "true" {
                 green.append(ScoreReason(code: "signed.notarized", ref: .gatekeeper, params: ["publisher": publisherName]))
-            } else if fact(Fact.publisherName) != nil {
+            } else if fact(Fact.publisherName) != nil, strictness == .standard {
                 green.append(ScoreReason(code: "signed.knownPublisher", ref: .signerIdentity, params: ["publisher": publisherName]))
             }
+        }
+
+        // Strict: green must be earned; an unknown origin or a sensitive
+        // permission from something Apple never checked stays amber.
+        if strictness == .strict, !isSystem, !matchesOfficial, !isTrusted {
+            if fact(Fact.downloadSource) == "unknown" { green.removeAll() }
+            if prompt.service.isSensitive, fact(Fact.notarized) != "true", signerKind != .appStore { green.removeAll() }
         }
 
         if !green.isEmpty {

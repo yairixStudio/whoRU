@@ -6,10 +6,13 @@ import Foundation
 public struct ClaudeCodeAnalyst: Analyst {
     public let id = "claude-code"
     public let executable: String
+    /// Model alias or id passed to the CLI; empty means the request's model.
+    public let model: String
     public let hardTimeout: Duration
 
-    public init(executable: String, hardTimeout: Duration = .seconds(90)) {
+    public init(executable: String, model: String = "", hardTimeout: Duration = .seconds(90)) {
         self.executable = executable
+        self.model = model
         self.hardTimeout = hardTimeout
     }
 
@@ -62,12 +65,13 @@ public struct ClaudeCodeAnalyst: Analyst {
     }
 
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
-        onEvent(.started(model: request.model))
+        let modelArgument = model.isEmpty ? request.model : model
+        onEvent(.started(model: modelArgument))
         let prompt = AnalystPrompt.userMessage(for: request.bundle) + "\n\n" + AnalystPrompt.schemaInstruction()
         let output = try await run([
             "-p", prompt,
             "--output-format", "json",
-            "--model", request.model,
+            "--model", modelArgument,
             "--append-system-prompt", AnalystPrompt.systemPrompt + "\n\nYou may only run the metadata commands you were given, on the paths named in the evidence bundle. Do not read file contents and do not look at the user's other files or folders.",
             "--allowedTools", Self.allowedTools.joined(separator: ","),
             "--disallowedTools", Self.disallowedTools.joined(separator: ","),
@@ -83,8 +87,8 @@ public struct ClaudeCodeAnalyst: Analyst {
         }
         onEvent(.usage(inputTokens: usage.input, outputTokens: usage.output))
         return AnalysisResult(
-            verdict: verdict, model: request.model, inputTokens: usage.input, outputTokens: usage.output, costUSD: usage.cost,
-            session: AnalystSession(engine: id, model: request.model, payload: ["session_id": .string(sessionID)]),
+            verdict: verdict, model: modelArgument, inputTokens: usage.input, outputTokens: usage.output, costUSD: usage.cost,
+            session: AnalystSession(engine: id, model: modelArgument, payload: ["session_id": .string(sessionID)]),
             toolCalls: []
         )
     }

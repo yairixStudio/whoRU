@@ -122,3 +122,5 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) first. It explains what we are lo
 ## License
 
 [MIT](LICENSE).
+
+Made by [Yairix Studio](https://github.com/yairixStudio).

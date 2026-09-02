@@ -8,19 +8,19 @@ import WhoRUCore
 @MainActor
 final class CompanionPanel: NSPanel {
     static let width: CGFloat = 300
-    static let maxHeight: CGFloat = 560
+    static let maxHeight: CGFloat = 600
     static let gap: CGFloat = 12
 
     let session: ScanSession
     private var hosting: NSHostingView<CompanionRoot>!
     private var dialogFrame: Rect?
     private var userOffset: CGPoint?
-    private var contentHeight: CGFloat = 160
+    private var contentHeight: CGFloat = 150
 
     init(session: ScanSession, model: AppModel) {
         self.session = session
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 160),
+            contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 150),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -36,6 +36,8 @@ final class CompanionPanel: NSPanel {
         isMovableByWindowBackground = true
         animationBehavior = .none
         isReleasedWhenClosed = false
+        // Resizes happen every animation frame while content grows; keep them cheap.
+        displaysWhenScreenProfileChanges = false
 
         let root = CompanionRoot(session: session, model: model, onHeight: { [weak self] height in
             self?.updateHeight(height)
@@ -44,74 +46,79 @@ final class CompanionPanel: NSPanel {
         })
         hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = []
+        hosting.translatesAutoresizingMaskIntoConstraints = true
+        hosting.autoresizingMask = [.width, .height]
         contentView = hosting
     }
 
     // MARK: Placement
 
-    /// Places the panel beside the dialog, on the side with more room, top edges aligned.
-    func place(besideDialog frame: Rect, animated: Bool) {
+    /// Places the panel beside the dialog, on the side with more room, top
+    /// edges aligned. Called for every move of the dialog, so it must be
+    /// instant: no animation, one frame update.
+    func place(besideDialog frame: Rect) {
         dialogFrame = frame
-        guard let screen = screenContaining(frame) ?? NSScreen.main else { return }
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.height
-        // AX coordinates are top-left origin; AppKit is bottom-left of the primary screen.
-        let dialogAppKit = NSRect(x: frame.x, y: primaryHeight - frame.y - frame.height, width: frame.width, height: frame.height)
+        setFrame(targetFrame(besideDialog: frame, height: currentHeight), display: true)
+    }
+
+    private var currentHeight: CGFloat { min(contentHeight, Self.maxHeight) }
+
+    private func targetFrame(besideDialog frame: Rect, height: CGFloat) -> NSRect {
+        guard let screen = screenContaining(frame) ?? NSScreen.main else { return self.frame }
+        let dialogAppKit = Self.appKitRect(frame)
         let visible = screen.visibleFrame
-        let height = min(contentHeight, Self.maxHeight)
         var x: CGFloat
-        let rightRoom = visible.maxX - dialogAppKit.maxX
-        let leftRoom = dialogAppKit.minX - visible.minX
-        if rightRoom >= Self.width + Self.gap * 2 || rightRoom >= leftRoom {
-            x = dialogAppKit.maxX + Self.gap
-        } else {
-            x = dialogAppKit.minX - Self.gap - Self.width
-        }
-        x = max(visible.minX + 8, min(x, visible.maxX - Self.width - 8))
-        var y = dialogAppKit.maxY - height
-        y = max(visible.minY + 8, min(y, visible.maxY - height - 8))
+        var y: CGFloat
         if let userOffset {
             x = dialogAppKit.maxX + userOffset.x
             y = dialogAppKit.maxY + userOffset.y - height
-        }
-        let target = NSRect(x: x, y: y, width: Self.width, height: height)
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.25
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                animator().setFrame(target, display: true)
-            }
         } else {
-            setFrame(target, display: true)
+            let rightRoom = visible.maxX - dialogAppKit.maxX
+            let leftRoom = dialogAppKit.minX - visible.minX
+            x = (rightRoom >= Self.width + Self.gap * 2 || rightRoom >= leftRoom)
+                ? dialogAppKit.maxX + Self.gap
+                : dialogAppKit.minX - Self.gap - Self.width
+            y = dialogAppKit.maxY - height
         }
+        x = max(visible.minX + 8, min(x, visible.maxX - Self.width - 8))
+        y = max(visible.minY + 8, min(y, visible.maxY - height - 8))
+        return NSRect(x: x, y: y, width: Self.width, height: height)
     }
 
     /// For manual scans with no dialog: top-right of the main screen.
     func placeStandalone() {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let height = min(contentHeight, Self.maxHeight)
-        setFrame(NSRect(x: visible.maxX - Self.width - 16, y: visible.maxY - height - 16, width: Self.width, height: height), display: true)
+        setFrame(NSRect(x: visible.maxX - Self.width - 16, y: visible.maxY - currentHeight - 16, width: Self.width, height: currentHeight), display: true)
+    }
+
+    private static func appKitRect(_ frame: Rect) -> NSRect {
+        // AX and the window list use a top-left origin on the primary display; AppKit uses bottom-left.
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return NSRect(x: frame.x, y: primaryHeight - frame.y - frame.height, width: frame.width, height: frame.height)
     }
 
     private func screenContaining(_ frame: Rect) -> NSScreen? {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let point = NSPoint(x: frame.x + frame.width / 2, y: primaryHeight - frame.y - frame.height / 2)
+        let rect = Self.appKitRect(frame)
+        let point = NSPoint(x: rect.midX, y: rect.midY)
         return NSScreen.screens.first { $0.frame.contains(point) }
     }
 
+    /// The content reports its natural height on every layout pass, including
+    /// each frame of an expanding disclosure. The window follows immediately,
+    /// keeping its top edge fixed, so the content is never taller than the window.
     private func updateHeight(_ height: CGFloat) {
-        let clamped = min(max(height, 120), Self.maxHeight)
-        guard abs(clamped - contentHeight) > 0.5 else { return }
+        let clamped = min(max(height.rounded(.up), 120), Self.maxHeight)
+        guard clamped != contentHeight else { return }
         contentHeight = clamped
-        // Keep the top edge where it is.
-        var frame = self.frame
-        let top = frame.maxY
-        frame.size.height = clamped
-        frame.origin.y = top - clamped
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            animator().setFrame(frame, display: true)
+        if let dialogFrame, !session.dialogClosed {
+            setFrame(targetFrame(besideDialog: dialogFrame, height: clamped), display: true)
+        } else {
+            var frame = self.frame
+            let top = frame.maxY
+            frame.size.height = clamped
+            frame.origin.y = top - clamped
+            setFrame(frame, display: true)
         }
     }
 
@@ -119,8 +126,7 @@ final class CompanionPanel: NSPanel {
         super.mouseUp(with: event)
         // Remember where the user put it relative to the dialog.
         if let dialogFrame {
-            let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-            let dialogAppKit = NSRect(x: dialogFrame.x, y: primaryHeight - dialogFrame.y - dialogFrame.height, width: dialogFrame.width, height: dialogFrame.height)
+            let dialogAppKit = Self.appKitRect(dialogFrame)
             userOffset = CGPoint(x: frame.minX - dialogAppKit.maxX, y: frame.maxY - dialogAppKit.maxY)
         }
     }
@@ -131,7 +137,7 @@ final class CompanionPanel: NSPanel {
         alphaValue = 0
         orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.2 : 0.3
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.15 : 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             animator().alphaValue = 1
         }
@@ -166,18 +172,26 @@ final class CompanionPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Root view: injects the session and reports its natural height.
+/// Root view: measures the content's natural height and shows a scroll view
+/// only when it would not fit the panel's maximum height.
 struct CompanionRoot: View {
     let session: ScanSession
     let model: AppModel
     let onHeight: (CGFloat) -> Void
     let onClose: () -> Void
 
+    @State private var naturalHeight: CGFloat = 150
+
     var body: some View {
-        CompanionView(session: session, model: model, onClose: onClose)
-            .frame(width: CompanionPanel.width)
-            .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.height } action: { height in
-                onHeight(height)
-            }
+        ScrollView(.vertical, showsIndicators: naturalHeight > CompanionPanel.maxHeight) {
+            CompanionView(session: session, model: model, onClose: onClose)
+                .frame(width: CompanionPanel.width)
+                .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.height } action: { height in
+                    naturalHeight = height
+                    onHeight(height)
+                }
+        }
+        .scrollDisabled(naturalHeight <= CompanionPanel.maxHeight)
+        .frame(width: CompanionPanel.width, height: min(naturalHeight, CompanionPanel.maxHeight))
     }
 }

@@ -1,12 +1,45 @@
 import Foundation
 
 public enum EngineChoice: String, Codable, Sendable, CaseIterable {
-    /// Pick at first run: Claude Code if installed and verified, else an API key, else none.
+    /// Whatever is present: Claude Code, an API key, Codex, Gemini, else none.
     case auto
     case claudeAPI
     case claudeCode
+    case codex
+    case gemini
     case local
     case none
+
+    public var displayName: String {
+        switch self {
+        case .auto: "Automatic"
+        case .claudeAPI: "Claude API"
+        case .claudeCode: "Claude Code"
+        case .codex: "Codex CLI"
+        case .gemini: "Gemini CLI"
+        case .local: "Local model"
+        case .none: "None"
+        }
+    }
+
+    /// Models offered in the picker for command-line engines. Empty string is the CLI's own default.
+    public var suggestedModels: [String] {
+        switch self {
+        case .claudeCode: ["", "opus", "sonnet", "haiku"]
+        case .codex: ["", "gpt-5", "gpt-5-codex", "o3"]
+        case .gemini: ["", "gemini-2.5-pro", "gemini-2.5-flash"]
+        default: []
+        }
+    }
+}
+
+/// How hard the evidence has to work before something is green.
+public enum Strictness: String, Codable, Sendable, CaseIterable {
+    /// Known publishers are green even when notarization cannot be checked (command-line tools).
+    case standard
+    /// Green needs notarization or an official-source match; unknown origin or a
+    /// sensitive permission without notarization stays amber.
+    case strict
 }
 
 public enum AnalysisDepth: String, Codable, Sendable, CaseIterable {
@@ -39,6 +72,8 @@ public struct Settings: Codable, Sendable, Hashable {
     /// `nil` means all services.
     public var enabledServices: Set<PermissionService>? = nil
 
+    public var strictness: Strictness = .standard
+
     // AI
     public var engine: EngineChoice = .auto
     public var depth: AnalysisDepth = .balanced
@@ -46,8 +81,14 @@ public struct Settings: Codable, Sendable, Hashable {
     public var allowWebSearch = false
     /// Resolved path of the Claude Code binary, when detected or set.
     public var claudeCodePath: String? = nil
+    public var codexPath: String? = nil
+    public var geminiPath: String? = nil
+    /// Model per command-line engine, keyed by `EngineChoice.rawValue`. Empty = the CLI's default.
+    public var engineModels: [String: String] = [:]
     public var localModelURL: String = "http://localhost:11434"
     public var localModelName: String = "llama3"
+
+    public func model(for engine: EngineChoice) -> String { engineModels[engine.rawValue] ?? "" }
 
     // Privacy
     public var localOnly = false
@@ -66,6 +107,41 @@ public struct Settings: Codable, Sendable, Hashable {
     public var verdictCacheDays = 30
 
     public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Settings()
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
+        showNextToDialogs = try c.decodeIfPresent(Bool.self, forKey: .showNextToDialogs) ?? d.showNextToDialogs
+        askModelAutomatically = try c.decodeIfPresent(Bool.self, forKey: .askModelAutomatically) ?? d.askModelAutomatically
+        enabledServices = try c.decodeIfPresent(Set<PermissionService>.self, forKey: .enabledServices)
+        strictness = try c.decodeIfPresent(Strictness.self, forKey: .strictness) ?? d.strictness
+        engine = try c.decodeIfPresent(EngineChoice.self, forKey: .engine) ?? d.engine
+        depth = try c.decodeIfPresent(AnalysisDepth.self, forKey: .depth) ?? d.depth
+        monthlyBudgetUSD = try c.decodeIfPresent(Double.self, forKey: .monthlyBudgetUSD) ?? d.monthlyBudgetUSD
+        allowWebSearch = try c.decodeIfPresent(Bool.self, forKey: .allowWebSearch) ?? d.allowWebSearch
+        claudeCodePath = try c.decodeIfPresent(String.self, forKey: .claudeCodePath)
+        codexPath = try c.decodeIfPresent(String.self, forKey: .codexPath)
+        geminiPath = try c.decodeIfPresent(String.self, forKey: .geminiPath)
+        engineModels = try c.decodeIfPresent([String: String].self, forKey: .engineModels) ?? d.engineModels
+        localModelURL = try c.decodeIfPresent(String.self, forKey: .localModelURL) ?? d.localModelURL
+        localModelName = try c.decodeIfPresent(String.self, forKey: .localModelName) ?? d.localModelName
+        localOnly = try c.decodeIfPresent(Bool.self, forKey: .localOnly) ?? d.localOnly
+        virusTotalEnabled = try c.decodeIfPresent(Bool.self, forKey: .virusTotalEnabled) ?? d.virusTotalEnabled
+        historyRetentionDays = try c.decodeIfPresent(Int.self, forKey: .historyRetentionDays) ?? d.historyRetentionDays
+        debugPanel = try c.decodeIfPresent(Bool.self, forKey: .debugPanel) ?? d.debugPanel
+        onboardingCompleted = try c.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? d.onboardingCompleted
+        maxToolCalls = try c.decodeIfPresent(Int.self, forKey: .maxToolCalls) ?? d.maxToolCalls
+        softTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .softTimeoutSeconds) ?? d.softTimeoutSeconds
+        hardTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .hardTimeoutSeconds) ?? d.hardTimeoutSeconds
+        verdictCacheDays = try c.decodeIfPresent(Int.self, forKey: .verdictCacheDays) ?? d.verdictCacheDays
+    }
+
+    static func merging(defaults: Settings, with data: Data) -> Settings {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode(Settings.self, from: data)) ?? defaults
+    }
 
     public func isEnabled(_ service: PermissionService) -> Bool {
         enabledServices?.contains(service) ?? true
@@ -112,7 +188,8 @@ public struct JSONFileSettingsStore: SettingsStore {
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(Settings.self, from: data)
+        // Fields added after a file was written decode with their defaults.
+        return (try? decoder.decode(Settings.self, from: data)) ?? Settings.merging(defaults: Settings(), with: data)
     }
 
     public func save(_ settings: Settings) throws {

@@ -211,6 +211,16 @@ struct CLI {
         } else {
             print("claude code:     not found")
         }
+        if let path = settings.codexPath ?? CodexAnalyst.locate() {
+            print("codex cli:       \(path) · \(await CodexAnalyst.version(of: path) ?? "?")")
+        } else {
+            print("codex cli:       not found")
+        }
+        if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
+            print("gemini cli:      \(path) · \(await GeminiAnalyst.version(of: path) ?? "?")")
+        } else {
+            print("gemini cli:      not found")
+        }
         print("api key:         \(secrets.secret(.anthropicAPIKey) != nil ? "present" : "none")")
         print("virustotal key:  \(secrets.secret(.virusTotalAPIKey) != nil ? "present" : "none")")
         let analyst = await MacEnvironment.analyst(settings: settings, secrets: secrets)

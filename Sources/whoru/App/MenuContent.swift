@@ -28,7 +28,7 @@ struct MenuContent: View {
         Divider()
         Text(model.accessibilityGranted ? model.engineDescription : "Accessibility permission needed")
         Button("Setup Assistant…") { AppDelegate.shared?.showOnboarding() }
-        SettingsLink { Text("Settings…") }
+        Button("Settings…") { AppDelegate.shared?.showSettings() }
             .keyboardShortcut(",")
         Divider()
         Button("Quit whoRU") { NSApp.terminate(nil) }
