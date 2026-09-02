@@ -54,6 +54,7 @@ final class CompanionPanel: NSPanel {
         animationBehavior = .none
         isReleasedWhenClosed = false
         displaysWhenScreenProfileChanges = false
+        NotificationCenter.default.addObserver(self, selector: #selector(didMove), name: NSWindow.didMoveNotification, object: self)
 
         let root = CompanionRoot(session: session, model: model, presentation: presentation, onHeight: { [weak self] height in
             self?.updateHeight(height)
@@ -76,7 +77,7 @@ final class CompanionPanel: NSPanel {
         dialogFrame = frame
         let target = targetFrame(besideDialog: frame, height: currentHeight)
         presentation.anchor = target.minX >= Self.appKitRect(frame).maxX ? .topLeading : .topTrailing
-        setFrame(target, display: true)
+        apply(target)
     }
 
     private var currentHeight: CGFloat { min(contentHeight, Self.maxHeight) }
@@ -145,19 +146,35 @@ final class CompanionPanel: NSPanel {
         guard bounds != dialogFrame else { return }
         dialogFrame = bounds
         let target = targetFrame(besideDialog: bounds, height: currentHeight)
+        repositioning = true
         if target.size == frame.size {
             setFrameOrigin(target.origin)
         } else {
             setFrame(target, display: true)
         }
+        repositioning = false
     }
 
-    /// For manual scans with no dialog: top-right of the main screen.
+    /// For a panel with no dialog to sit next to (a manual scan, the last
+    /// scan reopened from the menu): where the user last left such a panel,
+    /// else the top-right of the main screen.
     func placeStandalone() {
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
         presentation.anchor = .top
-        setFrame(NSRect(x: visible.maxX - Self.width - 16, y: visible.maxY - currentHeight - 16, width: Self.width, height: currentHeight), display: true)
+        var rect = NSRect(x: visible.maxX - Self.width - 16, y: visible.maxY - currentHeight - 16, width: Self.width, height: currentHeight)
+        if let topLeft = Self.standaloneTopLeft, NSScreen.screens.contains(where: { $0.visibleFrame.contains(topLeft) }) {
+            rect.origin = NSPoint(x: topLeft.x, y: topLeft.y - currentHeight)
+        }
+        apply(rect)
+    }
+
+    /// Moves the panel from code. Distinguishes our own placement from the
+    /// user dragging it, which `didMove` records.
+    private func apply(_ rect: NSRect) {
+        repositioning = true
+        setFrame(rect, display: true)
+        repositioning = false
     }
 
     private static func appKitRect(_ frame: Rect) -> NSRect {
@@ -180,31 +197,36 @@ final class CompanionPanel: NSPanel {
         guard clamped != contentHeight else { return }
         contentHeight = clamped
         if let dialogFrame, !session.dialogClosed {
-            setFrame(targetFrame(besideDialog: dialogFrame, height: clamped), display: true)
+            apply(targetFrame(besideDialog: dialogFrame, height: clamped))
         } else {
             var frame = self.frame
             let top = frame.maxY
             frame.size.height = clamped
             frame.origin.y = top - clamped
-            setFrame(frame, display: true)
+            apply(frame)
         }
     }
 
-    private var dragStartOrigin: NSPoint?
+    // MARK: Dragging
 
-    override func mouseDown(with event: NSEvent) {
-        dragStartOrigin = frame.origin
-        super.mouseDown(with: event)
-    }
+    /// The panel can be dragged from its header and its top rows (a
+    /// `WindowDragGesture` in the content) and from any background (the
+    /// window's own background-move). Both end up here.
+    private var repositioning = false
+    /// Where the user last left a panel that had no dialog next to it: top-left corner.
+    private static var standaloneTopLeft: NSPoint?
 
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        // Remember where the user put it relative to the dialog, but only
-        // after a real drag; a click on a disclosure is not a placement choice.
-        defer { dragStartOrigin = nil }
-        guard let start = dragStartOrigin, hypot(frame.origin.x - start.x, frame.origin.y - start.y) > 4, let dialogFrame else { return }
-        let dialogAppKit = Self.appKitRect(dialogFrame)
-        userOffset = CGPoint(x: frame.minX - dialogAppKit.maxX, y: frame.maxY - dialogAppKit.maxY)
+    /// A move while the mouse button is down, and not made by our own
+    /// placement, is the user dragging: remember where they put it, relative
+    /// to the dialog, or on its own when there is none.
+    @objc private func didMove(_ note: Notification) {
+        guard !repositioning, NSEvent.pressedMouseButtons & 1 != 0 else { return }
+        if let dialogFrame, !session.dialogClosed {
+            let dialog = Self.appKitRect(dialogFrame)
+            userOffset = CGPoint(x: frame.minX - dialog.maxX, y: frame.maxY - dialog.maxY)
+        } else {
+            Self.standaloneTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
+        }
     }
 
     // MARK: Appearance
@@ -273,6 +295,8 @@ struct CompanionRoot: View {
     var body: some View {
         VStack(spacing: 0) {
             CompanionHeader(session: session, onClose: onClose)
+                .contentShape(Rectangle())
+                .gesture(WindowDragGesture())
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
                     headerHeight = height
                     onHeight(height + contentHeight)

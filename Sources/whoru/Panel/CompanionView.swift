@@ -98,6 +98,8 @@ struct CompanionView: View {
             }
             Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
     }
 
     private var subtitle: String {
@@ -143,6 +145,8 @@ struct CompanionView: View {
             }
             Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
+        .gesture(WindowDragGesture())
         .accessibilityElement(children: .combine)
     }
 
