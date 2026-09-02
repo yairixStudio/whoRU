@@ -186,10 +186,13 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         let (texts, buttons) = textsAndButtons(in: window)
         guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
             log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, no prompt pattern matched: \(texts.joined(separator: " | "), privacy: .public)")
-            if known {
+            if known, Self.looksLikeAuthentication(texts: texts) {
+                // A password or keychain dialog from the same system process:
+                // not a permission request, nothing for the panel to explain.
+                AppLog.shared.info("watcher", "window of \(info.owner) is an authentication dialog, not a permission prompt; ignored: \(texts.first?.prefix(120) ?? "")")
+                ignored.insert(info.number)
+            } else if known {
                 AppLog.shared.warn("watcher", "window of \(info.owner) had no recognizable prompt text (\(texts.count) texts): \(texts.joined(separator: " | ").prefix(200))")
-            }
-            if known {
                 emit(info, title: texts.first ?? "", body: texts.dropFirst().first, buttons: buttons, started: started)
             } else {
                 ignored.insert(info.number)
@@ -197,6 +200,19 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             return
         }
         emit(info, title: texts[index], body: texts.dropFirst(index + 1).first, buttons: buttons, started: started)
+    }
+
+    /// Password, keychain and admin-rights dialogs come from the same system
+    /// process as some permission prompts. They ask for a secret, not for a
+    /// permission, and the panel has nothing to say about them.
+    static let authenticationWords = [
+        "password", "keychain", "touch id", "wants to make changes", "wants to access key",
+        "סיסמה", "מחזיק המפתחות", "passwort", "schlüsselbund", "mot de passe", "trousseau", "contraseña", "llavero", "пароль",
+    ]
+
+    public static func looksLikeAuthentication(texts: [String]) -> Bool {
+        let lowered = texts.map { $0.lowercased() }
+        return lowered.contains { text in authenticationWords.contains { text.contains($0) } }
     }
 
     private func isKnownPromptProcess(_ pid: pid_t) -> Bool {

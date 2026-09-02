@@ -31,7 +31,9 @@ EOF
 echo "▸ hdiutil"
 hdiutil create -volname "whoRU $VERSION" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
 
-IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -E '"(Developer ID Application|Apple Development): ' | head -1 | awk '{print $2}')"
+IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null)"
+IDENTITY="$(printf '%s\n' "$IDENTITIES" | grep '"Developer ID Application: ' | head -1 | awk '{print $2}')"
+[ -n "$IDENTITY" ] || IDENTITY="$(printf '%s\n' "$IDENTITIES" | grep '"Apple Development: ' | head -1 | awk '{print $2}')"
 if [ -n "${IDENTITY:-}" ]; then
   echo "▸ codesign dmg ($IDENTITY)"
   codesign --force --sign "$IDENTITY" "$DMG"

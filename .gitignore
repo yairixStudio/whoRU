@@ -19,3 +19,6 @@ dist/
 # Local secrets and scratch
 .env
 *.local.json
+
+# Developer ID signing material (private keys until imported, requests, certificates)
+.signing/

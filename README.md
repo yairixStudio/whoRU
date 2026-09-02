@@ -98,7 +98,7 @@ scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applicati
 
 The package installs the app into Applications, links `whoru` into `/usr/local/bin`, quits an older copy first and opens the new one when it is done, so the setup assistant appears right away. It refuses to run on anything older than macOS 26.
 
-For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile (`xcrun notarytool store-credentials whoru-notary …`). The scripts pick all three up from the Keychain by themselves and say what is missing at the end.
+For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile named `whoru-notary` (from an App Store Connect API key or an app-specific password; `scripts/notarize.sh` has both commands). Issue the certificates from the signing requests in `.signing/` (gitignored) and run `scripts/import-developer-id.sh` to put them in the Keychain under whoRU's name. From then on the scripts pick everything up from the Keychain by themselves, notarize, staple, and say what is still missing at the end.
 
 First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out, an API key, or none.
 

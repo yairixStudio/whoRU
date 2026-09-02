@@ -164,40 +164,53 @@ public enum TCCDecisionLookup {
         public var event: TCCAuthEvent
     }
 
+    /// Looks at the log a few times, at growing intervals: the entry usually
+    /// lands within seconds, but the daemon can be busy.
+    public static let lookSchedule: [Duration] = [.milliseconds(1500), .seconds(2), .seconds(3), .seconds(5), .seconds(8), .seconds(12)]
+
     public static func decision(service: PermissionService, subject: Subject?, requesterName: String, since: Date,
-                                attempts: Int = 4, delay: Duration = .milliseconds(1500)) async -> Match? {
+                                looks: [Duration] = lookSchedule) async -> Match? {
         guard service != .other else { return nil }
-        let start = Self.startFormatter.string(from: since.addingTimeInterval(-5))
+        let windowStart = since.addingTimeInterval(-5)
+        let start = Self.startFormatter.string(from: windowStart)
         let predicate = #"process == "tccd" AND category == "access" AND eventMessage BEGINSWITH "AUTHREQ_""#
-        var seen: [TCCAuthEvent] = []
-        for attempt in 0..<attempts {
-            if attempt > 0 { try? await Task.sleep(for: delay) }
+        var events: [TCCAuthEvent] = []
+        for (attempt, delay) in ([Duration.zero] + looks).enumerated() {
+            if delay > .zero { try? await Task.sleep(for: delay) }
             guard let output = try? await Command.run("/usr/bin/log", ["show", "--start", start, "--predicate", predicate, "--style", "ndjson"], timeout: .seconds(20)),
                   output.succeeded else { continue }
-            let events = TCCLogParser.events(fromNDJSON: output.stdout)
-            seen = events.filter { $0.service == "kTCCService" + service.rawValue }
-            if let hit = match(events, service: service, subject: subject, requesterName: requesterName, since: since.addingTimeInterval(-5)),
+            events = TCCLogParser.events(fromNDJSON: output.stdout)
+            if let hit = match(events, service: service, subject: subject, requesterName: requesterName, since: windowStart),
                let decision = hit.decision {
-                AppLog.shared.info("decision", "“\(requesterName)” \(service.shortName): \(decision.rawValue), read from the system log (authValue \(hit.authValue ?? -1), reason \(hit.authReason ?? -1), msgID \(hit.msgID), attempt \(attempt + 1))")
+                AppLog.shared.info("decision", "“\(requesterName)” \(service.shortName): \(decision.rawValue), read from the system log (authValue \(hit.authValue ?? -1), reason \(hit.authReason ?? -1), service \(hit.service ?? "?"), msgID \(hit.msgID), look \(attempt + 1))")
                 return Match(decision: decision, event: hit)
             }
         }
-        let summary = seen.suffix(5).map { "\($0.msgID) value=\($0.authValue.map(String.init) ?? "-") reason=\($0.authReason.map(String.init) ?? "-") ids=\($0.identifiers.joined(separator: "|"))" }
-        AppLog.shared.info("decision", "“\(requesterName)” \(service.shortName): no answer in the system log after \(attempts) looks · \(seen.count) requests for the service\(summary.isEmpty ? "" : " · " + summary.joined(separator: " ; "))")
+        // Say what was there, so a format change on a new macOS shows up in the log.
+        let services = Set(events.compactMap(\.service)).sorted().map { $0.replacingOccurrences(of: "kTCCService", with: "") }
+        let answers = events.filter(\.isUserAnswer).suffix(5).map {
+            "\($0.msgID) \($0.service?.replacingOccurrences(of: "kTCCService", with: "") ?? "?") value=\($0.authValue.map(String.init) ?? "-") reason=\($0.authReason.map(String.init) ?? "-") ids=\($0.identifiers.joined(separator: "|"))"
+        }
+        AppLog.shared.info("decision", "“\(requesterName)” \(service.shortName): no answer in the system log after \(looks.count + 1) looks over \(Int(Date().timeIntervalSince(since))) s · \(events.count) requests since the dialog, services [\(services.joined(separator: ", "))]\(answers.isEmpty ? "" : " · user answers: " + answers.joined(separator: " ; "))")
         return nil
     }
 
-    /// The most recent answer for this permission that names the program, or
-    /// the only answer in the window when the log names no program.
+    /// The most recent answer for this permission that names the program;
+    /// failing that, an answer whose service the log hid but that names the
+    /// program; failing that, the only answer for the permission in the
+    /// window when the log names no program at all.
     public static func match(_ events: [TCCAuthEvent], service: PermissionService, subject: Subject?, requesterName: String, since: Date) -> TCCAuthEvent? {
         let wanted = "kTCCService" + service.rawValue
         let answers = events.filter { event in
-            event.service == wanted && event.isUserAnswer && event.decision != nil && (event.timestamp.map { $0 >= since } ?? true)
+            event.isUserAnswer && event.decision != nil && (event.timestamp.map { $0 >= since } ?? true)
         }
-        guard !answers.isEmpty else { return nil }
-        if let subject, let hit = answers.last(where: { $0.names(subject) }) { return hit }
-        if let hit = answers.last(where: { $0.names(displayName: requesterName) }) { return hit }
-        if answers.count == 1, answers[0].identifiers.isEmpty, answers[0].binaryPaths.isEmpty { return answers[0] }
+        let forService = answers.filter { $0.service == wanted }
+        func names(_ event: TCCAuthEvent) -> Bool {
+            (subject.map(event.names) ?? false) || event.names(displayName: requesterName)
+        }
+        if let hit = forService.last(where: names) { return hit }
+        if let hit = answers.filter({ $0.service == nil }).last(where: names) { return hit }
+        if forService.count == 1, forService[0].identifiers.isEmpty, forService[0].binaryPaths.isEmpty { return forService[0] }
         return nil
     }
 

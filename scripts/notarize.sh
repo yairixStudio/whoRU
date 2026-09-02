@@ -26,7 +26,7 @@ case "$FILE" in
       exit 0
     fi ;;
   *)
-    if ! codesign -dv "$FILE" 2>&1 | grep -q "Developer ID Application"; then
+    if ! codesign -dv --verbose=2 "$FILE" 2>&1 | grep -q "Developer ID Application"; then
       echo "▸ notarization skipped: $FILE is not signed with Developer ID Application"
       exit 0
     fi ;;

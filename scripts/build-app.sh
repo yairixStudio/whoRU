@@ -15,7 +15,10 @@ BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)
 if [ -z "${CODESIGN_IDENTITY:-}" ]; then
   # Use the certificate hash, not its name: names can be ambiguous when a
   # certificate was renewed and both copies are in the Keychain.
-  CODESIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | grep -E '"(Developer ID Application|Apple Development): ' | head -1 | awk '{print $2}')"
+  # Developer ID first (it is what other Macs accept), else the development certificate.
+  IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null)"
+  CODESIGN_IDENTITY="$(printf '%s\n' "$IDENTITIES" | grep '"Developer ID Application: ' | head -1 | awk '{print $2}')"
+  [ -n "$CODESIGN_IDENTITY" ] || CODESIGN_IDENTITY="$(printf '%s\n' "$IDENTITIES" | grep '"Apple Development: ' | head -1 | awk '{print $2}')"
 fi
 IDENTITY="${CODESIGN_IDENTITY:--}"
 BUNDLE_ID="com.yairixstudio.whoru"

@@ -76,7 +76,7 @@ ls -la "$PKG"
 echo "✓ $PKG ($ARCHS)"
 echo
 echo "Ready for other Macs?"
-if codesign -dv "$APP" 2>&1 | grep -q "Developer ID Application"; then
+if codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Developer ID Application"; then
   echo "  ✓ app signed with Developer ID Application"
 else
   echo "  ✗ app not signed with Developer ID Application (Gatekeeper will refuse it elsewhere)"
