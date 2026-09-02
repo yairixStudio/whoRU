@@ -67,6 +67,9 @@ struct CLI {
         AppLog.shared.configure(directory: FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!.appendingPathComponent("Logs/whoRU", isDirectory: true))
         AppLog.shared.echoToStderr = options.flag("--verbose")
         if noAI { settings.engine = .none }
+        // A scan typed at the command line is itself a request; the app's
+        // "ask automatically" switch is about dialogs.
+        settings.askModelAutomatically = true
         if let engine = options.value("--engine").flatMap(EngineChoice.init(rawValue:)) { settings.engine = engine }
         if let modelName = options.value("--model") { settings.engineModels[settings.engine.rawValue] = modelName }
         if let depth = options.value("--depth").flatMap(AnalysisDepth.init(rawValue:)) { settings.depth = depth }

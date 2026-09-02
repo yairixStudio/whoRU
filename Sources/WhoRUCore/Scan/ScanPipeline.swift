@@ -148,25 +148,83 @@ public struct ScanPipeline: Sendable {
             onEvent(.analysisSkipped(reason: reason))
             return await finish(record, onEvent: onEvent)
         }
-        guard let analyst = env.analyst else { return await skip("no AI engine configured") }
-        if env.settings.localOnly, analyst.id != "local", analyst.id != "apple" { return await skip("local-only mode") }
+        guard let analyst = env.analyst else { return await skip(env.settings.engine == .none ? "AI off · evidence only" : "no AI agent found") }
+        if let reason = Self.standingReasonToSkip(analyst, env: env) { return await skip(reason) }
+        if !env.settings.askModelAutomatically { return await skip("AI on request only") }
         if hard.canSkipModel { return await skip(hard.isSystemComponent ? "system component signed by Apple" : "trusted publisher") }
-        if let store = env.store, let spend = try? await store.monthlySpend(), spend >= env.settings.monthlyBudgetUSD, analyst.id == "claude-api" {
-            return await skip("monthly budget reached")
-        }
+        if let reason = await budgetReasonToSkip(analyst) { return await skip(reason) }
 
         // 6. Analyze.
+        await analyze(&record, with: analyst, history: history, scanID: scanID, onEvent: onEvent)
+        return await finish(record, onEvent: onEvent)
+    }
+
+    /// Runs the model on a scan that was scored without it, because the user
+    /// asked for it after the fact: the agent is off, automatic asking is off,
+    /// the publisher was trusted, or an earlier attempt failed. Only those
+    /// automatic gates are skipped; local-only mode and the budget still hold.
+    public func analyze(record: ScanRecord, onEvent: @escaping @Sendable (ScanEvent) -> Void) async -> ScanRecord {
+        let env = environment
+        var record = record
+        let log = AppLog.shared
+        let scanID = String(record.id.uuidString.prefix(8)).lowercased()
+        guard record.hardScore != nil else {
+            onEvent(.analysisFailed("the scan has not finished"))
+            return record
+        }
+        guard let analyst = env.analyst else {
+            onEvent(.analysisFailed("no AI agent available"))
+            return record
+        }
+        var reasonToSkip = Self.standingReasonToSkip(analyst, env: env)
+        if reasonToSkip == nil { reasonToSkip = await budgetReasonToSkip(analyst) }
+        if let reason = reasonToSkip {
+            log.info("scan", "\(scanID) model skipped on request: \(reason)")
+            onEvent(.analysisSkipped(reason: reason))
+            return record
+        }
+        log.info("scan", "\(scanID) model requested by the user · engine \(analyst.id)")
+        let history = await historySummary(for: record.evidence)
+        await analyze(&record, with: analyst, history: history, scanID: scanID, onEvent: onEvent)
+        return await finish(record, onEvent: onEvent)
+    }
+
+    /// Reasons that hold whether the request is automatic or by hand.
+    private static func standingReasonToSkip(_ analyst: any Analyst, env: ScanEnvironment) -> String? {
+        if env.settings.localOnly, analyst.id != "local", analyst.id != "apple" { return "local-only mode" }
+        return nil
+    }
+
+    private func budgetReasonToSkip(_ analyst: any Analyst) async -> String? {
+        let env = environment
+        guard analyst.id == "claude-api", let store = env.store, let spend = try? await store.monthlySpend() else { return nil }
+        return spend >= env.settings.monthlyBudgetUSD ? "monthly budget reached" : nil
+    }
+
+    private func historySummary(for evidence: [EvidenceItem]) async -> HistorySummary? {
+        guard let store = environment.store else { return nil }
+        let facts = HardScoreEngine.mergedFacts(evidence)
+        return try? await store.history(teamID: facts[Fact.signerTeamID], sha256: facts[Fact.sha256])
+    }
+
+    /// The model call itself, with validation. Fills in the record's verdict,
+    /// engine, cost and conversation state.
+    private func analyze(_ record: inout ScanRecord, with analyst: any Analyst, history: HistorySummary?, scanID: String, onEvent: @escaping @Sendable (ScanEvent) -> Void) async {
+        let env = environment
+        let log = AppLog.shared
+        guard let hard = record.hardScore else { return }
         let bundle = EvidenceBundle(
-            prompt: prompt, subject: resolved.subject, candidates: resolved.candidates, evidence: evidence,
+            prompt: record.prompt, subject: record.subject, candidates: record.candidates, evidence: record.evidence,
             hardScore: hard, history: history, answerLanguage: env.locale
         ).redactedForModel(homeDirectory: env.paths.homeDirectory)
         let request = AnalysisRequest(
             bundle: bundle, model: env.settings.depth.modelID, effort: env.settings.depth.effort,
             maxToolCalls: env.settings.maxToolCalls, allowWebSearch: env.settings.allowWebSearch, locale: env.locale
         )
-        let tools = ToolRegistry(subject: resolved.subject, handlers: env.toolHandlers(resolved.subject, evidence))
+        let tools = ToolRegistry(subject: record.subject, handlers: env.toolHandlers(record.subject, record.evidence))
         let analysisStarted = Date()
         log.info("analyst", "\(scanID) \(analyst.id) start · model \(request.model) · \(tools.tools.count) tools")
+        record.verdictRejected = nil
         do {
             let result = try await analyst.analyze(request, tools: tools, onEvent: { event in
                 if case .toolCall(let name, _) = event { log.info("analyst", "\(scanID) tool \(name)") }
@@ -174,11 +232,12 @@ public struct ScanPipeline: Sendable {
             })
             record.engine = analyst.id
             record.model = result.model
-            record.inputTokens = result.inputTokens
-            record.outputTokens = result.outputTokens
-            record.costUSD = result.costUSD
+            record.inputTokens += result.inputTokens
+            record.outputTokens += result.outputTokens
+            record.costUSD += result.costUSD
             record.analystSession = result.session
-            switch VerdictValidator().validate(result.verdict, against: hard, evidenceKeys: Set(evidence.map(\.key.rawValue))) {
+            record.fromCache = false
+            switch VerdictValidator().validate(result.verdict, against: hard, evidenceKeys: Set(record.evidence.map(\.key.rawValue))) {
             case .accepted(let verdict):
                 record.verdict = verdict
                 log.info("analyst", "\(scanID) \(analyst.id) verdict in \(elapsedMs(since: analysisStarted)) ms: \(verdict.verdict.rawValue) \(verdict.confidence)% \(verdict.recommendation.rawValue) · \(result.inputTokens) in / \(result.outputTokens) out · $\(String(format: "%.4f", result.costUSD))")
@@ -192,7 +251,6 @@ public struct ScanPipeline: Sendable {
             log.error("analyst", "\(scanID) \(analyst.id) failed after \(elapsedMs(since: analysisStarted)) ms: \(error)")
             onEvent(.analysisFailed(String(describing: error)))
         }
-        return await finish(record, onEvent: onEvent)
     }
 
     /// Runs the slow checks after the verdict is on screen and returns the

@@ -20,6 +20,10 @@ final class AppModel {
             try? settingsStore.save(settings)
             environmentTask = nil
             applyLaunchAtLogin()
+            if oldValue.engine != settings.engine || oldValue.localOnly != settings.localOnly || oldValue.engineModels != settings.engineModels
+                || oldValue.depth != settings.depth || oldValue.askModelAutomatically != settings.askModelAutomatically {
+                Task { await refreshEngineDescription() }
+            }
         }
     }
 
@@ -50,6 +54,13 @@ final class AppModel {
     var watcherRunning = false
     var accessibilityGranted = AccessibilityPermission.isGranted
     var engineDescription = "…"
+    /// `Analyst.id` of the engine that runs automatically; `nil` when the
+    /// agent is off or nothing usable is installed.
+    var currentAnalystID: String?
+    /// Agents that can answer a request made by hand, in order of preference:
+    /// the chosen one, or, with the agent set to None, whatever is usable on
+    /// this Mac so the user can pick one for a single scan.
+    var onDemandAgents: [EngineChoice] = []
     var monthlySpend: Double = 0
 
     private var environmentTask: Task<ScanEnvironment, Never>?
@@ -103,37 +114,76 @@ final class AppModel {
         return lines.joined(separator: "\n")
     }
 
-    func environment() async -> ScanEnvironment {
-        if let task = environmentTask { return await task.value }
+    /// The environment scans run in. With `engine`, one built for a request
+    /// the user makes by hand with that agent; not cached.
+    func environment(engine: EngineChoice? = nil) async -> ScanEnvironment {
         let settings = settings
         let store = store
         let publishers = publisherDirectory
         let locale = Locale.preferredLanguages.first ?? "en"
+        if let engine {
+            return await MacEnvironment.environment(settings: settings, store: store, publishers: publishers, locale: locale, engine: engine)
+        }
+        if let task = environmentTask { return await task.value }
         let task = Task { await MacEnvironment.environment(settings: settings, store: store, publishers: publishers, locale: locale) }
         environmentTask = task
         return await task.value
     }
 
+    /// The environment that can continue a session's conversation: the
+    /// automatic one, or the agent that answered when the user asked by hand.
+    private func environment(for session: ScanSession) async -> ScanEnvironment {
+        if let id = session.record?.analystSession?.engine, id != currentAnalystID, let engine = EngineChoice(analystID: id) {
+            return await environment(engine: engine)
+        }
+        return await environment()
+    }
+
     func refreshEngineDescription() async {
         let env = await environment()
+        currentAnalystID = env.analyst?.id
         AppLog.shared.info("app", "engine: \(env.analyst?.id ?? "none") (setting \(settings.engine.rawValue))")
         if let analyst = env.analyst {
-            func chosen(_ engine: EngineChoice) -> String { engine.modelDisplayName(settings.model(for: engine)) }
-            switch analyst.id {
-            case "claude-code": engineDescription = "Claude Code · \(chosen(.claudeCode))"
-            case "claude-api": engineDescription = "Claude API · \(settings.depth.modelID)"
-            case "codex": engineDescription = "Codex CLI · \(chosen(.codex))"
-            case "gemini": engineDescription = "Gemini CLI · \(chosen(.gemini))"
-            case "apple": engineDescription = "Apple Intelligence · on-device"
-            case "local": engineDescription = "Local model · \(settings.localModelName)"
-            default: engineDescription = analyst.id
-            }
+            engineDescription = describe(analyst.id)
         } else if settings.localOnly {
             engineDescription = "Evidence only · local-only mode"
         } else {
-            engineDescription = settings.engine == .none ? "Evidence only, no AI" : "Evidence only · no AI agent found"
+            engineDescription = settings.engine == .none ? "Evidence only · AI on request" : "Evidence only · no AI agent found"
+        }
+        onDemandAgents = await detectOnDemandAgents()
+        if env.analyst == nil, settings.engine == .none, onDemandAgents.isEmpty {
+            engineDescription = "Evidence only, no AI"
         }
         monthlySpend = (try? await store.monthlySpend()) ?? 0
+    }
+
+    /// "Claude Code · Claude Opus 5", for the menu and the Ask AI button.
+    func describe(_ analystID: String) -> String {
+        func chosen(_ engine: EngineChoice) -> String { engine.modelDisplayName(settings.model(for: engine)) }
+        switch analystID {
+        case "claude-code": return "Claude Code · \(chosen(.claudeCode))"
+        case "claude-api": return "Claude API · \(settings.depth.modelID)"
+        case "codex": return "Codex CLI · \(chosen(.codex))"
+        case "gemini": return "Gemini CLI · \(chosen(.gemini))"
+        case "apple": return "Apple Intelligence · on-device"
+        case "local": return "Local model · \(settings.localModelName)"
+        default: return analystID
+        }
+    }
+
+    func describe(_ engine: EngineChoice) -> String {
+        engine.analystID.map(describe) ?? engine.displayName
+    }
+
+    private func detectOnDemandAgents() async -> [EngineChoice] {
+        if settings.engine != .none {
+            // The chosen agent; if it is unusable the environment falls back by itself.
+            return [settings.engine == .auto ? (currentAnalystID.flatMap(EngineChoice.init(analystID:)) ?? .auto) : settings.engine]
+        }
+        var usable = await AgentStatus.detectAll(settings: settings).filter(\.isUsable).map(\.engine)
+        if secrets.secret(.anthropicAPIKey) != nil { usable.append(.claudeAPI) }
+        if settings.localOnly { usable = usable.filter(\.isOnDevice) }
+        return usable
     }
 
     // MARK: Scans
@@ -186,13 +236,42 @@ final class AppModel {
             let env = await environment()
             let pipeline = ScanPipeline(environment: env)
             let prompt = session.prompt
-            var record = await pipeline.run(prompt: prompt, presetSubject: presetSubject) { event in
+            let record = await pipeline.run(prompt: prompt, presetSubject: presetSubject) { event in
                 Task { @MainActor in session.apply(event) }
             }
-            record = await pipeline.runSlowChecks(record: record) { event in
+            let withSlowChecks = await pipeline.runSlowChecks(record: record) { event in
                 Task { @MainActor in session.apply(event) }
             }
-            session.record = record
+            // The session may have moved on meanwhile (a verdict asked for by
+            // hand, the decision): add the slow checks to it, do not replace it.
+            let live = withSlowChecks.filled(from: session.record ?? withSlowChecks)
+            session.record = live
+            if live != withSlowChecks { try? await store.save(live) }
+            monthlySpend = (try? await store.monthlySpend()) ?? 0
+        }
+    }
+
+    /// Runs the AI on a scan that was scored without it, because the user
+    /// asked: the agent is off, automatic asking is off, the publisher was
+    /// trusted, or the last attempt failed. `engine` picks the agent for this
+    /// one scan when the setting is None.
+    func askAI(_ session: ScanSession, engine: EngineChoice? = nil) {
+        guard let record = session.record, session.canAskAI else { return }
+        let choice = engine ?? onDemandAgents.first
+        guard let choice, choice != .none else { return }
+        session.analysis = .thinking
+        session.toolActivity = nil
+        AppLog.shared.info("app", "AI asked by hand for “\(session.prompt.requesterName)” via \(choice.rawValue)")
+        Task {
+            let env = await environment(engine: choice)
+            let pipeline = ScanPipeline(environment: env)
+            let updated = await pipeline.analyze(record: record) { event in
+                Task { @MainActor in session.apply(event) }
+            }
+            let live = updated.filled(from: session.record ?? updated)
+            session.record = live
+            if live != updated { try? await store.save(live) }
+            if session.analysis == .thinking { session.analysis = .idle }
             monthlySpend = (try? await store.monthlySpend()) ?? 0
         }
     }
@@ -205,7 +284,7 @@ final class AppModel {
         session.streamingReply = ""
         session.messages.append(ChatMessage(role: .user, text: text))
         Task {
-            let env = await environment()
+            let env = await environment(for: session)
             let pipeline = ScanPipeline(environment: env)
             do {
                 let updated = try await pipeline.chat(record: record, question: text) { event in
@@ -227,12 +306,52 @@ final class AppModel {
         }
     }
 
-    func recordDecision(_ decision: UserDecision, for session: ScanSession) {
+    func recordDecision(_ decision: UserDecision, for session: ScanSession, source: String = "user") {
         session.decision = decision
+        session.decisionSource = decision == .unknown ? nil : source
         guard var record = session.record else { return }
         record.userDecision = decision
+        record.decisionSource = session.decisionSource
         session.record = record
         Task { try? await store.save(record) }
+    }
+
+    /// Reads the answer from the system's own log once the dialog is gone,
+    /// so the user is not asked what they just clicked. The panel falls back
+    /// to its buttons only when nothing is found.
+    func detectDecision(for session: ScanSession) {
+        guard session.decisionLookup == .idle else { return }
+        guard session.dialog != nil, !session.isManual, session.decision == .unknown, session.prompt.service != .other else {
+            session.decisionLookup = .notFound
+            return
+        }
+        session.decisionLookup = .running
+        let service = session.prompt.service
+        let subject = session.subject
+        let name = session.prompt.requesterName
+        let since = session.startedAt
+        Task {
+            let match = await TCCDecisionLookup.decision(service: service, subject: subject ?? session.subject, requesterName: name, since: since)
+            guard session.decision == .unknown else {
+                session.decisionLookup = .found
+                return
+            }
+            if let match {
+                recordDecision(match.decision, for: session, source: "system-log")
+                session.decisionLookup = .found
+            } else {
+                session.decisionLookup = .notFound
+            }
+        }
+    }
+
+    /// Whether the panel can keep talking to the AI about this scan: the
+    /// automatic agent made the verdict, or the user picked an agent for it.
+    func canChat(_ session: ScanSession) -> Bool {
+        guard let engineID = session.record?.analystSession?.engine else { return false }
+        if engineID == currentAnalystID { return true }
+        guard settings.engine == .none, let engine = EngineChoice(analystID: engineID) else { return false }
+        return onDemandAgents.contains(engine)
     }
 
     func dismiss(_ session: ScanSession) {

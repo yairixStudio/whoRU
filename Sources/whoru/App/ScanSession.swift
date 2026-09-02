@@ -14,6 +14,11 @@ final class ScanSession: Identifiable {
         case done
         case rejected(String)
         case failed(String)
+
+        var isFailure: Bool {
+            if case .failed = self { return true }
+            return false
+        }
     }
 
     let id: String
@@ -41,6 +46,12 @@ final class ScanSession: Identifiable {
     var startedAt = Date()
     var isManual = false
 
+    enum DecisionLookup: Equatable { case idle, running, found, notFound }
+    /// Whether the system's own record of the answer has been looked up yet.
+    var decisionLookup: DecisionLookup = .idle
+    /// `user` or `system-log`; see `ScanRecord.decisionSource`.
+    var decisionSource: String?
+
     init(id: String, dialog: DialogInstance?, prompt: PermissionPrompt, rawTitle: String) {
         self.id = id
         self.dialog = dialog
@@ -50,6 +61,15 @@ final class ScanSession: Identifiable {
 
     var isScanning: Bool { hardScore == nil }
     var chatActive: Bool { !messages.isEmpty || !draft.isEmpty || isReplying }
+
+    /// The scan is scored, stored, and the AI has not spoken about it yet.
+    var canAskAI: Bool { record != nil && hardScore != nil && verdict == nil && analysis != .thinking && !isReplying }
+
+    /// The conversation on file can be continued by the analyst with this id.
+    func canContinueConversation(with analystID: String?) -> Bool {
+        guard let analystID, let session = record?.analystSession else { return false }
+        return session.engine == analystID
+    }
 
     /// Headline shown in the glance layer: the model's if accepted, else the deterministic one.
     var displayedHeadline: Headline? {
@@ -137,8 +157,10 @@ final class ScanSession: Identifiable {
         case .analysisFailed(let error):
             analysis = .failed(error)
             toolActivity = nil
-        case .finished(let record):
-            self.record = record
+        case .finished(let finished):
+            // Steps run in parallel (slow checks, a verdict asked for by hand,
+            // the decision); the one finishing last must not undo the others.
+            record = record.map { finished.filled(from: $0) } ?? finished
         }
     }
 }

@@ -58,6 +58,25 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     /// Engines that run entirely on this Mac and are allowed in local-only mode.
     public var isOnDevice: Bool { self == .appleIntelligence || self == .local }
 
+    /// The `Analyst.id` this engine produces, so a stored conversation can be
+    /// matched with the engine that can continue it.
+    public var analystID: String? {
+        switch self {
+        case .claudeAPI: "claude-api"
+        case .claudeCode: "claude-code"
+        case .codex: "codex"
+        case .gemini: "gemini"
+        case .appleIntelligence: "apple"
+        case .local: "local"
+        case .auto, .none: nil
+        }
+    }
+
+    public init?(analystID: String) {
+        guard let match = Self.allCases.first(where: { $0.analystID == analystID }) else { return nil }
+        self = match
+    }
+
     /// Where to get the tool. The minimum: a page and a one-line install.
     public var installURL: URL? {
         switch self {

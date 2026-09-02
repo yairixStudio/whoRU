@@ -38,6 +38,9 @@ public struct ScanRecord: Codable, Sendable, Hashable, Identifiable {
     public var engine: String?
     public var model: String?
     public var userDecision: UserDecision
+    /// How the decision became known: `user` (marked by hand) or `system-log`
+    /// (read from the system's own record of the answer). `nil` when unknown.
+    public var decisionSource: String?
     public var inputTokens: Int
     public var outputTokens: Int
     public var costUSD: Double
@@ -75,6 +78,7 @@ public struct ScanRecord: Codable, Sendable, Hashable, Identifiable {
         self.engine = engine
         self.model = model
         self.userDecision = userDecision
+        self.decisionSource = nil
         self.inputTokens = 0
         self.outputTokens = 0
         self.costUSD = 0
@@ -237,5 +241,36 @@ public actor JSONFileScanStore: ScanStore {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
         return d
+    }
+}
+
+extension ScanRecord {
+    /// Fills what this record lacks from another copy of the same scan. Steps
+    /// run in parallel (the slow checks, a verdict the user asked for, the
+    /// user's decision) and the one that finishes last must not undo the rest.
+    public func filled(from other: ScanRecord) -> ScanRecord {
+        guard other.id == id else { return self }
+        var merged = self
+        for item in other.evidence where !merged.evidence.contains(where: { $0.key == item.key }) {
+            merged.evidence.append(item)
+        }
+        if merged.verdict == nil, let verdict = other.verdict {
+            merged.verdict = verdict
+            merged.verdictRejected = other.verdictRejected
+            merged.engine = other.engine
+            merged.model = other.model
+            merged.inputTokens = other.inputTokens
+            merged.outputTokens = other.outputTokens
+            merged.costUSD = other.costUSD
+            merged.fromCache = other.fromCache
+        }
+        if merged.analystSession == nil { merged.analystSession = other.analystSession }
+        if merged.messages.count < other.messages.count { merged.messages = other.messages }
+        if merged.userDecision == .unknown, other.userDecision != .unknown {
+            merged.userDecision = other.userDecision
+            merged.decisionSource = other.decisionSource
+        }
+        if merged.finishedAt == nil { merged.finishedAt = other.finishedAt }
+        return merged
     }
 }

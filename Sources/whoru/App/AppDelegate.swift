@@ -56,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let index = args.firstIndex(of: "--scan"), index + 1 < args.count {
             let service = args.firstIndex(of: "--service").flatMap { $0 + 1 < args.count ? PermissionService(shortName: args[$0 + 1]) : nil } ?? .other
-            scanManually((args[index + 1] as NSString).expandingTildeInPath, service: service)
+            // `--ask` presses the panel's Ask AI button once the scan is scored (development).
+            scanManually((args[index + 1] as NSString).expandingTildeInPath, service: service, askAI: args.contains("--ask"))
         }
         // Accessibility can be granted while we run; pick it up without a restart.
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -132,6 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let panel = panels[id] else { return }
             let session = panel.session
             session.dialogClosed = true
+            // The system logs the answer; read it rather than asking the user.
+            model.detectDecision(for: session)
             // The user answered; the panel goes with the dialog. A conversation
             // in progress keeps it, as a normal window.
             if session.chatActive {
@@ -178,12 +181,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scanManually(url.path)
     }
 
-    func scanManually(_ path: String, service: PermissionService = .other) {
+    func scanManually(_ path: String, service: PermissionService = .other, askAI: Bool = false) {
         let session = model.startManualScan(path: path, service: service)
         let panel = CompanionPanel(session: session, model: model)
         panel.placeStandalone()
         panel.fadeIn()
         panels[session.id] = panel
+        if askAI {
+            Task { [model] in
+                while session.record == nil || session.analysis == .thinking { try? await Task.sleep(for: .milliseconds(100)) }
+                if !model.canChat(session) { model.askAI(session) }
+            }
+        }
     }
 
     func showPanel(for session: ScanSession) {

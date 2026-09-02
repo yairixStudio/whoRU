@@ -207,34 +207,90 @@ struct HistoryDetail: View {
                         Text("Denied").tag(UserDecision.denied)
                     }
                     .labelsHidden().frame(width: 110)
+                    if session.decision != .unknown, session.decisionSource == "system-log" {
+                        Text("read from the system log").font(.caption).foregroundStyle(.tertiary)
+                    }
                     Spacer()
                     Button("Copy Report") { copyReport() }
                 }
-                if record.analystSession != nil {
-                    GroupBox("Conversation") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(session.messages) { m in
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(m.role == .user ? "You" : "whoRU").font(.caption2).foregroundStyle(.tertiary)
-                                    Text(m.text).textSelection(.enabled)
-                                }
-                            }
-                            if session.isReplying { ProgressView().controlSize(.small) }
-                            HStack {
-                                TextField("Ask about this scan…", text: Binding(get: { session.draft }, set: { session.draft = $0 }))
-                                    .textFieldStyle(.roundedBorder)
-                                    .onSubmit { send() }
-                                Button("Send") { send() }.disabled(session.draft.isEmpty || session.isReplying)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+                aiSection
             }
             .padding(20)
         }
         .sheet(item: $showRaw) { RawOutputSheet(item: $0) }
         .onChange(of: session.messages.count) { _, _ in if let r = session.record { onUpdate(r) } }
+        .onChange(of: session.verdict) { _, _ in if let r = session.record { onUpdate(r) } }
+        .onChange(of: session.analysis) { _, _ in if let r = session.record { onUpdate(r) } }
+    }
+
+    /// What the AI can do for this record now, not what it did when the record
+    /// was made: with the agent off there is no conversation, only a note; with
+    /// an agent that can continue the conversation on file, the chat; otherwise
+    /// a button that sends the scan to the current agent.
+    @ViewBuilder
+    private var aiSection: some View {
+        if model.settings.engine == .none {
+            if !session.messages.isEmpty { conversation(readOnly: true) }
+            GroupBox {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles").foregroundStyle(.secondary)
+                    Text("The AI agent is off in Settings, so there is no conversation here. Choose an agent to ask about this scan.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Settings…") { AppDelegate.shared?.showSettings() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if session.canContinueConversation(with: model.currentAnalystID) {
+            conversation(readOnly: false)
+        } else {
+            if !session.messages.isEmpty { conversation(readOnly: true) }
+            if session.canAskAI, let agent = model.onDemandAgents.first {
+                GroupBox {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles").foregroundStyle(.tint)
+                        if session.analysis == .thinking {
+                            ProgressView().controlSize(.small)
+                            Text(session.toolActivity ?? "AI is reading the evidence…").foregroundStyle(.secondary)
+                        } else if let engine = record.analystSession?.engine {
+                            Text("This conversation was with \(model.describe(engine)). Your agent is now \(model.engineDescription); asking starts a new one.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        } else {
+                            Text("This scan was not sent to the AI.").font(.callout).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if session.analysis != .thinking {
+                            Button("Ask \(agent.displayName)") { model.askAI(session) }
+                                .help("Sends the evidence to \(model.describe(agent)). File contents never leave this Mac.")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func conversation(readOnly: Bool) -> some View {
+        GroupBox("Conversation") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(session.messages) { m in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(m.role == .user ? "You" : "whoRU").font(.caption2).foregroundStyle(.tertiary)
+                        Text(m.text).textSelection(.enabled)
+                    }
+                }
+                if session.isReplying { ProgressView().controlSize(.small) }
+                if !readOnly {
+                    HStack {
+                        TextField("Ask about this scan…", text: Binding(get: { session.draft }, set: { session.draft = $0 }))
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { send() }
+                        Button("Send") { send() }.disabled(session.draft.isEmpty || session.isReplying)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func send() {
@@ -278,5 +334,7 @@ extension ScanSession {
         fromCache = record.fromCache
         dialogClosed = true
         startedAt = record.startedAt
+        decisionSource = record.decisionSource
+        decisionLookup = .notFound
     }
 }

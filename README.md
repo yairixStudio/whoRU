@@ -68,6 +68,8 @@ permission dialog ──▶ Watcher ──▶ Resolver ──▶ Collector ─�
 <img src="docs/images/settings-ai.png" width="480" alt="whoRU settings, AI tab: engine picker, installed tools, API key, analysis depth, monthly budget">
 
 - **Strictness** (Settings → General): *standard* trusts a valid signature from a known publisher; *strict* insists on notarization or an official-release match and keeps unknown origins amber.
+- **Ask AI on request.** The agent can be off, or set not to run by itself (Settings → General). The panel then shows an *Ask the AI about this* button that sends that one scan to an agent you pick, so nothing is sent until you say so. History follows the current setting: no agent, no conversation.
+- **Your answer, read from the system.** When a dialog closes, whoRU reads what you chose from the system's own log of the request (`log show`, subsystem `com.apple.TCC`), which needs no extra permission. The manual *Allowed / Denied* buttons appear only when the log has nothing.
 
 More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

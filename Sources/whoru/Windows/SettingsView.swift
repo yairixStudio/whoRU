@@ -36,7 +36,7 @@ private struct GeneralTab: View {
                 }
             } footer: {
                 if model.settings.engine != .none {
-                    Text("With automatic asking off, the panel shows the evidence and the deterministic verdict; the AI runs when you ask a question.")
+                    Text("With automatic asking off, the panel shows the evidence and the deterministic verdict, with an Ask AI button for the scans you want a second opinion on.")
                 }
             }
 
@@ -231,7 +231,7 @@ private struct AITab: View {
                             : "Local-only mode is on (Privacy), so no cloud agent runs, and this Mac has no on-device model. Evidence and the deterministic verdict still work."))
                 } else {
                     switch engine {
-                    case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
+                    case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere unless you press Ask AI in the panel, which lets you pick an agent for that one scan. History shows no conversation while the agent is off.")
                     case .appleIntelligence: Text("Apple’s on-device model explains the evidence without anything leaving this Mac. Smaller than the cloud agents, so expect shorter answers.")
                     default: Text("The agent explains the evidence and answers questions; it cannot override it.")
                     }

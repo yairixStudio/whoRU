@@ -90,7 +90,15 @@ public enum MacEnvironment {
         }
     }
 
-    public static func environment(settings: Settings, store: (any ScanStore)?, publishers: PublisherDirectory = PublisherDirectory(), locale: String = Locale.preferredLanguages.first ?? "en") async -> ScanEnvironment {
+    /// `engine` overrides the setting for one environment: a request the user
+    /// makes by hand ("Ask AI" in the panel) names the agent it wants, whatever
+    /// the automatic choice is. Local-only mode still applies.
+    public static func environment(settings base: Settings, store: (any ScanStore)?, publishers: PublisherDirectory = PublisherDirectory(), locale: String = Locale.preferredLanguages.first ?? "en", engine: EngineChoice? = nil) async -> ScanEnvironment {
+        let settings: Settings = {
+            var adjusted = base
+            if let engine { adjusted.engine = engine }
+            return adjusted
+        }()
         let secrets = secrets()
         let processes = MacProcessInspector()
         let analyst = await analyst(settings: settings, secrets: secrets)

@@ -49,6 +49,7 @@ struct CompanionView: View {
     @State private var showEvidence = false
     @State private var showRaw: EvidenceItem?
     @FocusState private var questionFocused: Bool
+    @State private var changingDecision = false
 
     private var animation: Animation { reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.15) }
 
@@ -59,11 +60,9 @@ struct CompanionView: View {
             if session.hardScore != nil {
                 explainSection
                 evidenceSection
-                if session.record?.analystSession != nil, !session.isManualWithoutEngine {
-                    chatSection
-                }
+                aiSection
             }
-            if session.dialogClosed, session.decision == .unknown, !session.isManual {
+            if session.dialogClosed, !session.isManual {
                 decisionRow
             }
         }
@@ -287,6 +286,59 @@ struct CompanionView: View {
         return EvidenceItem(key: "what_was_sent", status: .info, weight: .base, summary: "The exact JSON the AI received", raw: json, method: "evidence bundle")
     }
 
+    // MARK: AI
+
+    /// The AI slot: a conversation when the AI has spoken and can continue,
+    /// else a button that sends this one scan to an agent, whether the AI is
+    /// off, set to ask only on request, skipped for a trusted publisher, or
+    /// failed. Nothing is sent until the user presses it.
+    @ViewBuilder
+    private var aiSection: some View {
+        if model.canChat(session) {
+            chatSection
+        } else if session.canAskAI, !model.onDemandAgents.isEmpty {
+            askAIButton
+        }
+    }
+
+    private var askAIButton: some View {
+        let agents = model.onDemandAgents
+        let title: LocalizedStringKey = session.analysis.isFailure ? "Try the AI again" : "Ask the AI about this"
+        let label = HStack(spacing: 6) {
+            Image(systemName: "sparkles").foregroundStyle(.tint).font(.callout)
+            Text(title)
+            Spacer(minLength: 0)
+            if agents.count == 1 {
+                Text(agents[0].displayName).font(.caption).foregroundStyle(.tertiary)
+            } else {
+                Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(.quaternary.opacity(0.6), in: Capsule())
+        .overlay(Capsule().stroke(.separator.opacity(0.6), lineWidth: 0.5))
+        .contentShape(Capsule())
+        return Group {
+            if agents.count == 1 {
+                Button { model.askAI(session, engine: agents[0]) } label: { label }
+                    .buttonStyle(.plain)
+                    .help("Sends the evidence to \(model.describe(agents[0])). File contents never leave this Mac.")
+            } else {
+                Menu {
+                    ForEach(agents, id: \.self) { agent in
+                        Button(model.describe(agent)) { model.askAI(session, engine: agent) }
+                    }
+                } label: { label }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .help("Pick an agent for this one scan. File contents never leave this Mac.")
+            }
+        }
+        .accessibilityLabel(Text(title))
+    }
+
     // MARK: Chat
 
     private var chatSection: some View {
@@ -332,12 +384,38 @@ struct CompanionView: View {
 
     // MARK: Decision
 
+    /// What the user answered: read from the system's own log a moment after
+    /// the dialog closes; the buttons appear only when nothing was found.
+    @ViewBuilder
     private var decisionRow: some View {
-        HStack(spacing: 8) {
-            Text("What did you choose?").font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Button("Allowed") { model.recordDecision(.allowed, for: session) }.buttonStyle(.bordered).controlSize(.small)
-            Button("Denied") { model.recordDecision(.denied, for: session) }.buttonStyle(.bordered).controlSize(.small)
+        if session.decision == .unknown || changingDecision {
+            if session.decisionLookup == .running, !changingDecision {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Reading what you chose…").font(.caption).foregroundStyle(.tertiary)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text("What did you choose?").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Allowed") { model.recordDecision(.allowed, for: session); changingDecision = false }.buttonStyle(.bordered).controlSize(.small)
+                    Button("Denied") { model.recordDecision(.denied, for: session); changingDecision = false }.buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: session.decision == .allowed ? "checkmark.circle" : "hand.raised")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(session.decision == .allowed ? "You allowed it" : "You denied it")
+                    .font(.caption).foregroundStyle(.secondary)
+                if session.decisionSource == "system-log" {
+                    Text("· from the system log").font(.caption).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Button("Change") { changingDecision = true }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.tint)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
@@ -381,10 +459,6 @@ struct CompanionView: View {
         default: .secondary
         }
     }
-}
-
-extension ScanSession {
-    var isManualWithoutEngine: Bool { false }
 }
 
 /// The real icon of the program, as Finder shows it.
