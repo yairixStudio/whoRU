@@ -106,76 +106,99 @@ struct OnboardingView: View {
     }
 
     private var aiStep: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             Image(systemName: "sparkles")
-                .font(.system(size: 56))
+                .font(.system(size: 48))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(.tint)
-                .frame(height: 72)
+                .frame(height: 60)
             Text("Explain with an AI agent?")
                 .font(.largeTitle.weight(.semibold))
-            Text("The evidence works without it. An agent you already have adds a plain-language explanation and answers questions. Nothing to sign up for; you can change this later.")
-                .font(.body)
+            Text("The evidence works without it. An agent you already have adds a plain-language explanation and answers questions. You can change this later.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 380)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 if detecting {
-                    ProgressView().controlSize(.small)
+                    ProgressView().controlSize(.small).padding(.vertical, 20)
                 } else {
                     ForEach(agents) { agent in
-                        let usable = agent.isUsable
-                        engineCard(agent.engine, title: usable ? "Use \(agent.engine.displayName)" : agent.engine.displayName,
-                                   detail: usable ? agent.summary : (agent.isInstalled ? "Found but its signature could not be verified" : agent.summary),
-                                   enabled: usable, installLink: usable ? nil : agent.engine)
+                        agentRow(agent)
                     }
-                    engineCard(.none, title: "No AI for now", detail: "Hard evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true, installLink: nil)
+                    choiceRow(.none, title: "No AI for now", detail: "Evidence and a deterministic verdict only. Nothing is sent anywhere.", enabled: true, action: nil)
                 }
             }
             .frame(maxWidth: 380)
-            Spacer()
+            Spacer(minLength: 0)
         }
     }
 
-    private func engineCard(_ choice: EngineChoice, title: String, detail: String, enabled: Bool, installLink: EngineChoice?) -> some View {
-        Button {
-            if enabled { engineChoice = choice }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: engineChoice == choice ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(engineChoice == choice ? Color.accentColor : Color.secondary)
-                    .opacity(enabled ? 1 : 0.4)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.body.weight(.medium)).opacity(enabled ? 1 : 0.6)
-                    HStack(spacing: 8) {
-                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        if let installLink { InstallLink(engine: installLink) }
-                    }
-                }
-                Spacer()
-            }
-            .padding(10)
-            .background(.quaternary.opacity(engineChoice == choice ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(Rectangle())
+    private func agentRow(_ agent: AgentStatus) -> some View {
+        let detail: String = switch agent.need {
+        case .install: "Not installed"
+        case .signIn: "Installed · not signed in"
+        case .unverified: "Installed, but its signature could not be verified"
+        case .enableApple: agent.summary
+        case nil: agent.summary
         }
-        .buttonStyle(.plain)
+        return choiceRow(agent.engine, title: agent.engine.displayName, detail: detail, enabled: agent.isUsable,
+                         action: agent.isUsable ? nil : AnyView(AgentActionButton(status: agent).controlSize(.small)))
+    }
+
+    /// One compact row per choice: radio, name and status on the left, the
+    /// action that would make it usable on the far right.
+    private func choiceRow(_ choice: EngineChoice, title: String, detail: String, enabled: Bool, action: AnyView?) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                if enabled { engineChoice = choice }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: engineChoice == choice ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(engineChoice == choice ? Color.accentColor : Color.secondary)
+                        .opacity(enabled ? 1 : 0.4)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title).font(.body.weight(.medium)).opacity(enabled ? 1 : 0.6)
+                        Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!enabled)
+            if let action { action }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(engineChoice == choice ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     // MARK: Footer
 
+    /// Back on the left, the page dots centred, the primary action on the right.
     private var footer: some View {
-        HStack {
+        ZStack {
             HStack(spacing: 6) {
                 ForEach(steps, id: \.rawValue) { s in
                     Circle().fill(s == step ? Color.primary : Color.secondary.opacity(0.3)).frame(width: 6, height: 6)
                 }
             }
-            Spacer()
-            if let previous = previousStep {
-                Button("Back") { withAnimation { step = previous } }
+            HStack {
+                if let previous = previousStep {
+                    Button("Back") { withAnimation { step = previous } }
+                }
+                Spacer()
+                primaryActions
             }
+        }
+    }
+
+    @ViewBuilder
+    private var primaryActions: some View {
+        HStack(spacing: 8) {
             switch step {
             case .move:
                 Button("Not now") { goForward() }

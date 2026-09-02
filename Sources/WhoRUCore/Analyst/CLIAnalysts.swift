@@ -117,7 +117,13 @@ public struct CodexAnalyst: Analyst {
         arguments.append(prompt)
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory)
         if output.timedOut { throw AnalystError.timeout }
-        guard output.status == 0 else { throw AnalystError.invalidResponse("codex exited \(output.status): \(output.stderr.suffix(300))") }
+        guard output.status == 0 else {
+            let text = (output.stdout + output.stderr).lowercased()
+            if text.contains("login") || text.contains("not authenticated") || text.contains("api key") || text.contains("unauthorized") {
+                throw AnalystError.notConfigured("Codex is not signed in. Sign in from Settings → AI.")
+            }
+            throw AnalystError.invalidResponse("codex exited \(output.status): \(output.stderr.suffix(300))")
+        }
         if let answer = try? String(contentsOf: answerFile, encoding: .utf8), !answer.isEmpty { return answer }
         return output.stdout
     }
@@ -166,7 +172,13 @@ public struct GeminiAnalyst: Analyst {
         if !model.isEmpty { arguments += ["-m", model] }
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory)
         if output.timedOut { throw AnalystError.timeout }
-        guard output.status == 0 else { throw AnalystError.invalidResponse("gemini exited \(output.status): \(output.stderr.suffix(300))") }
+        guard output.status == 0 else {
+            let text = (output.stdout + output.stderr).lowercased()
+            if text.contains("login") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
+                throw AnalystError.notConfigured("Gemini CLI is not signed in. Sign in from Settings → AI.")
+            }
+            throw AnalystError.invalidResponse("gemini exited \(output.status): \(output.stderr.suffix(300))")
+        }
         // Newer versions can wrap the answer as {"response": "..."}; older ones print it directly.
         if let json = try? JSONValue.parse(output.stdout), let response = json["response"]?.stringValue { return response }
         return output.stdout

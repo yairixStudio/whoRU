@@ -114,6 +114,8 @@ struct AgentStatus: Identifiable {
     var path: String?
     var version: String?
     var verified: Bool
+    /// Signed in to the tool's account (or given a key). `nil` when unknown or not applicable.
+    var signedIn: Bool? = nil
     /// For agents that are not a file on disk (Apple Intelligence): why it cannot be used, if it cannot.
     var unavailableReason: String?
     var id: String { engine.rawValue }
@@ -123,9 +125,19 @@ struct AgentStatus: Identifiable {
     var isUsable: Bool {
         switch engine {
         case .appleIntelligence: unavailableReason == nil
-        case .claudeCode: isInstalled && verified
-        default: isInstalled
+        case .claudeCode: isInstalled && verified && signedIn != false
+        default: isInstalled && signedIn != false
         }
+    }
+
+    /// What is missing, in order: install, sign in, verify. `nil` when usable.
+    enum Need { case install, signIn, unverified, enableApple }
+    var need: Need? {
+        if engine == .appleIntelligence { return unavailableReason == nil ? nil : .enableApple }
+        if !isInstalled { return .install }
+        if engine == .claudeCode, !verified { return .unverified }
+        if signedIn == false { return .signIn }
+        return nil
     }
 
     var summary: String {
@@ -134,7 +146,8 @@ struct AgentStatus: Identifiable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = path.replacingOccurrences(of: home, with: "~")
         var parts = [version ?? "found"]
-        if engine == .claudeCode { parts.append(verified ? "verified" : "not verified") }
+        if engine == .claudeCode, !verified { parts.append("signature not verified") }
+        if signedIn == false { parts.append("not signed in") }
         parts.append(short)
         return parts.joined(separator: " · ")
     }
@@ -142,38 +155,46 @@ struct AgentStatus: Identifiable {
     static func detectAll(settings: WhoRUCore.Settings) async -> [AgentStatus] {
         var result: [AgentStatus] = []
         if let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate() {
-            result.append(AgentStatus(engine: .claudeCode, path: path, version: await ClaudeCodeAnalyst.version(of: path), verified: await ClaudeCodeVerifier.isTrusted(path)))
+            let verified = await ClaudeCodeVerifier.isTrusted(path)
+            result.append(AgentStatus(engine: .claudeCode, path: path, version: await ClaudeCodeAnalyst.version(of: path), verified: verified,
+                                      signedIn: verified ? await AgentAuth.isSignedIn(.claudeCode, executable: path) : nil))
         } else {
             result.append(AgentStatus(engine: .claudeCode, path: nil, version: nil, verified: false))
         }
         if let path = settings.codexPath ?? CodexAnalyst.locate() {
-            result.append(AgentStatus(engine: .codex, path: path, version: await CodexAnalyst.version(of: path), verified: true))
+            result.append(AgentStatus(engine: .codex, path: path, version: await CodexAnalyst.version(of: path), verified: true, signedIn: await AgentAuth.isSignedIn(.codex, executable: path)))
         } else {
             result.append(AgentStatus(engine: .codex, path: nil, version: nil, verified: false))
         }
         if let path = settings.geminiPath ?? GeminiAnalyst.locate() {
-            result.append(AgentStatus(engine: .gemini, path: path, version: await GeminiAnalyst.version(of: path), verified: true))
+            result.append(AgentStatus(engine: .gemini, path: path, version: await GeminiAnalyst.version(of: path), verified: true, signedIn: await AgentAuth.isSignedIn(.gemini, executable: path)))
         } else {
             result.append(AgentStatus(engine: .gemini, path: nil, version: nil, verified: false))
         }
-        result.append(AgentStatus(engine: .appleIntelligence, path: nil, version: nil, verified: true, unavailableReason: AppleFoundationAnalyst.unavailabilityReason()))
+        // Apple Intelligence is mentioned only on Macs that can run it at all.
+        if AppleFoundationAnalyst.isSupported {
+            result.append(AgentStatus(engine: .appleIntelligence, path: nil, version: nil, verified: true, unavailableReason: AppleFoundationAnalyst.unavailabilityReason()))
+        }
         return result
     }
 }
 
-/// One button: opens Terminal with the tool's install script (the script says
-/// where to look if it fails), or System Settings for Apple Intelligence.
-struct InstallLink: View {
-    let engine: EngineChoice
+/// The one action that makes an agent usable: Install (Terminal with the
+/// install script), Sign in (Terminal with the login flow), or System Settings
+/// for Apple Intelligence.
+struct AgentActionButton: View {
+    let status: AgentStatus
 
     var body: some View {
-        if engine == .appleIntelligence {
+        switch status.need {
+        case .install:
+            Button("Install") { try? AgentInstaller.install(status.engine) }.help(status.engine.installCommand ?? "")
+        case .signIn:
+            Button("Sign In") { try? AgentInstaller.signIn(status.engine) }.help(status.engine.loginCommand ?? "")
+        case .enableApple:
             Button("Open System Settings") { NSWorkspace.shared.open(AppleFoundationAnalyst.settingsURL) }
-                .controlSize(.small)
-        } else {
-            Button("Install") { try? AgentInstaller.install(engine) }
-                .controlSize(.small)
-                .help(engine.installCommand ?? "")
+        case .unverified, nil:
+            EmptyView()
         }
     }
 }
@@ -205,7 +226,9 @@ private struct AITab: View {
                 if model.settings.localOnly {
                     Text(AppleFoundationAnalyst.isAvailable
                          ? "Local-only mode is on (Privacy), so only Apple’s on-device model is offered. Nothing leaves this Mac. Cloud agents come back when you turn local-only mode off."
-                         : "Local-only mode is on (Privacy), so only an on-device model could run, and Apple Intelligence is not available on this Mac right now. Evidence and the deterministic verdict still work.")
+                         : (AppleFoundationAnalyst.isSupported
+                            ? "Local-only mode is on (Privacy), so only an on-device model could run, and Apple Intelligence is not available on this Mac right now. Evidence and the deterministic verdict still work."
+                            : "Local-only mode is on (Privacy), so no cloud agent runs, and this Mac has no on-device model. Evidence and the deterministic verdict still work."))
                 } else {
                     switch engine {
                     case .none: Text("Evidence and the deterministic verdict only. Nothing is sent anywhere.")
@@ -217,11 +240,13 @@ private struct AITab: View {
 
             Section(model.settings.localOnly ? "On-device" : "Agents on this Mac") {
                 ForEach(visibleAgents) { agent in
-                    LabeledContent(agent.engine.displayName) {
+                    LabeledContent {
                         HStack(spacing: 10) {
                             Text(agent.summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            if !agent.isUsable { InstallLink(engine: agent.engine) }
+                            AgentActionButton(status: agent).controlSize(.small)
                         }
+                    } label: {
+                        Text(agent.engine.displayName)
                     }
                 }
                 if agents.isEmpty { ProgressView().controlSize(.small) }
@@ -311,8 +336,8 @@ private struct PrivacyTab: View {
                     }
             } footer: {
                 Text(model.settings.localOnly
-                     ? "On: no network requests at all, no cloud agents, no official release manifests. Under AI, only Apple’s on-device model is offered."
-                     : "Turns off every network request, including cloud AI and official release manifests. Evidence and the deterministic verdict still work; Apple’s on-device model remains available.")
+                     ? (AppleFoundationAnalyst.isSupported ? "On: no network requests at all, no cloud agents, no official release manifests. Under AI, only Apple’s on-device model is offered." : "On: no network requests at all, no cloud agents, no official release manifests.")
+                     : (AppleFoundationAnalyst.isSupported ? "Turns off every network request, including cloud AI and official release manifests. Evidence and the deterministic verdict still work; Apple’s on-device model remains available." : "Turns off every network request, including cloud AI and official release manifests. Evidence and the deterministic verdict still work."))
             }
             Section("VirusTotal") {
                 Toggle("Look hashes up on VirusTotal", isOn: $model.settings.virusTotalEnabled)

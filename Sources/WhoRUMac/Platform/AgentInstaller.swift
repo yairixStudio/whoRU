@@ -8,12 +8,21 @@ import WhoRUCore
 public enum AgentInstaller {
     public static func install(_ engine: EngineChoice) throws {
         guard let script = engine.installScript else { throw CommandError("no installer for \(engine.displayName)") }
+        try runInTerminal(script, name: "install-\(engine.rawValue)", purpose: "install \(engine.displayName)")
+    }
+
+    public static func signIn(_ engine: EngineChoice) throws {
+        guard let script = engine.loginScript else { throw CommandError("no sign-in flow for \(engine.displayName)") }
+        try runInTerminal(script, name: "signin-\(engine.rawValue)", purpose: "sign in to \(engine.displayName)")
+    }
+
+    private static func runInTerminal(_ script: String, name: String, purpose: String) throws {
         let directory = DefaultPaths().applicationSupport.appendingPathComponent("installers", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("install-\(engine.rawValue).command")
+        let file = directory.appendingPathComponent("\(name).command")
         try script.write(to: file, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
-        AppLog.shared.info("app", "opening Terminal to install \(engine.displayName)")
+        AppLog.shared.info("app", "opening Terminal to \(purpose)")
         let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
             ?? URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
         let configuration = NSWorkspace.OpenConfiguration()

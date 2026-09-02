@@ -35,6 +35,18 @@ public struct AppleFoundationAnalyst: Analyst {
 
     public static var isAvailable: Bool { unavailabilityReason() == nil }
 
+    /// Whether this Mac and this macOS can run Apple Intelligence at all. When
+    /// not, the app does not mention it anywhere.
+    public static var isSupported: Bool {
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *) {
+            if case .unavailable(.deviceNotEligible) = SystemLanguageModel.default.availability { return false }
+            return true
+        }
+        #endif
+        return false
+    }
+
     public static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings-extension")!
 
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {

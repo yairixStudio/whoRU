@@ -124,7 +124,13 @@ public struct ClaudeCodeAnalyst: Analyst {
         environment["CLAUDE_CODE_ENTRYPOINT"] = nil
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: environment, workingDirectory: Self.scratchDirectory)
         if output.timedOut { throw AnalystError.timeout }
-        guard output.status == 0 else { throw AnalystError.invalidResponse("claude exited \(output.status): \(output.stderr.prefix(300))") }
+        guard output.status == 0 else {
+            let text = (output.stdout + output.stderr).lowercased()
+            if text.contains("not logged in") || text.contains("login") || text.contains("authenticat") || text.contains("api key") {
+                throw AnalystError.notConfigured("Claude Code is not signed in. Sign in from Settings → AI.")
+            }
+            throw AnalystError.invalidResponse("claude exited \(output.status): \(output.stderr.prefix(300))")
+        }
         return output
     }
 

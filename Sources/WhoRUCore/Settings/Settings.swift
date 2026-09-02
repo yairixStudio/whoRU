@@ -77,6 +77,29 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// How to sign in once the tool is installed. Interactive, so it runs in Terminal.
+    public var loginCommand: String? {
+        switch self {
+        case .claudeCode: "claude auth login"
+        case .codex: "codex login"
+        case .gemini: "gemini"
+        default: nil
+        }
+    }
+
+    /// A script that runs the sign-in flow in Terminal and says what to do after.
+    public var loginScript: String? {
+        guard let command = loginCommand, let url = installURL?.absoluteString else { return nil }
+        return """
+        #!/bin/sh
+        # whoRU: sign in to \(displayName)
+        printf '\\n\\033[1mwhoRU → signing in to \(displayName)\\033[0m\\n'
+        printf 'Follow the prompts. If this fails, see: \(url)\\n\\n'
+        \(command)
+        printf '\\n\\033[1mDone.\\033[0m Back in whoRU, \(displayName) should now show as signed in. You can close this window.\\n'
+        """
+    }
+
     /// A complete shell script that installs the tool the most reliable way
     /// available on the machine, and says where to look if it fails. The app
     /// runs it in Terminal so the user sees exactly what happens.
