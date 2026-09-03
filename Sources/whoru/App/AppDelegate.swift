@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.dismiss(session)
                 return
             }
-            let panel = CompanionPanel(session: session, model: model)
+            let panel = makePanel(for: session)
             panel.place(besideDialog: dialog.frame)
             panel.fadeIn()
             if let windowID = dialog.nativeWindowID { panel.follow(windowID: windowID) }
@@ -143,8 +143,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 panels[id] = nil
                 return
             }
+            guard !session.pinned else { return }
             scheduleClose(id: id, after: 0.35)
         }
+    }
+
+    /// Builds a panel and wires its close button to the same teardown the
+    /// timer does. A pinned panel has no timer, so this is its only way out.
+    private func makePanel(for session: ScanSession) -> CompanionPanel {
+        let panel = CompanionPanel(session: session, model: model)
+        panel.onDismiss = { [weak self] panel in
+            guard let self else { return }
+            let id = panel.session.id
+            closeTimers[id]?.cancel()
+            closeTimers[id] = nil
+            panels[id] = nil
+            model.dismiss(panel.session)
+        }
+        return panel
     }
 
     private func scheduleClose(id: String, after seconds: Double) {
@@ -184,7 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func scanManually(_ path: String, service: PermissionService = .other, askAI: Bool = false) {
         let session = model.startManualScan(path: path, service: service)
-        let panel = CompanionPanel(session: session, model: model)
+        let panel = makePanel(for: session)
         panel.placeStandalone()
         panel.fadeIn()
         panels[session.id] = panel
@@ -201,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.orderFrontRegardless()
             return
         }
-        let panel = CompanionPanel(session: session, model: model)
+        let panel = makePanel(for: session)
         if let dialog = session.dialog, !session.dialogClosed {
             panel.place(besideDialog: dialog.frame)
             if let windowID = dialog.nativeWindowID { panel.follow(windowID: windowID) }

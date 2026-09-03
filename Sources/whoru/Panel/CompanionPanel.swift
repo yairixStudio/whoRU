@@ -27,9 +27,13 @@ final class CompanionPanel: NSPanel {
 
     let session: ScanSession
     let presentation = PanelPresentation()
+    /// Runs after the close button has faded the panel out, so its owner can
+    /// let go of it. The close button is the only way out of a pinned panel.
+    var onDismiss: ((CompanionPanel) -> Void)?
     private var hosting: NSHostingView<CompanionRoot>!
     private var dialogFrame: Rect?
-    private var userOffset: CGPoint?
+    /// Set once the user drags the panel away: from then on it is theirs to place.
+    private var isDetached = false
     private var contentHeight: CGFloat = 150
     private var displayLink: CADisplayLink?
     private var followedWindow: Int?
@@ -59,7 +63,10 @@ final class CompanionPanel: NSPanel {
         let root = CompanionRoot(session: session, model: model, presentation: presentation, onHeight: { [weak self] height in
             self?.updateHeight(height)
         }, onClose: { [weak self] in
-            self?.fadeOut()
+            self?.fadeOut { [weak self] in
+                guard let self else { return }
+                onDismiss?(self)
+            }
         })
         hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = []
@@ -72,9 +79,11 @@ final class CompanionPanel: NSPanel {
 
     /// Places the panel beside the dialog, on the side with more room, top
     /// edges aligned. Called for every move of the dialog, so it must be
-    /// instant: no animation, one frame update.
+    /// instant: no animation, one frame update. A panel the user has dragged
+    /// away stays where they put it.
     func place(besideDialog frame: Rect) {
         dialogFrame = frame
+        guard !isDetached else { return }
         let target = targetFrame(besideDialog: frame, height: currentHeight)
         presentation.anchor = target.minX >= Self.appKitRect(frame).maxX ? .topLeading : .topTrailing
         apply(target)
@@ -83,9 +92,9 @@ final class CompanionPanel: NSPanel {
     private var currentHeight: CGFloat { min(contentHeight, Self.maxHeight) }
 
     /// Where the panel goes for a given dialog frame. Candidates in order:
-    /// where the user last put it, right, left, below, above. The first one
-    /// that stays on screen without covering the dialog wins; the panel must
-    /// never hide the buttons it is explaining.
+    /// right, left, below, above. The first one that stays on screen without
+    /// covering the dialog wins; the panel must never hide the buttons it is
+    /// explaining.
     private func targetFrame(besideDialog frame: Rect, height: CGFloat) -> NSRect {
         guard let screen = screenContaining(frame) ?? NSScreen.main else { return self.frame }
         let dialog = Self.appKitRect(frame)
@@ -94,9 +103,6 @@ final class CompanionPanel: NSPanel {
         let keepOut = dialog.insetBy(dx: -Self.gap / 2, dy: -Self.gap / 2)
 
         var candidates: [NSRect] = []
-        if let userOffset {
-            candidates.append(NSRect(origin: NSPoint(x: dialog.maxX + userOffset.x, y: dialog.maxY + userOffset.y - height), size: size))
-        }
         let right = NSRect(x: dialog.maxX + Self.gap, y: dialog.maxY - height, width: size.width, height: size.height)
         let left = NSRect(x: dialog.minX - Self.gap - Self.width, y: dialog.maxY - height, width: size.width, height: size.height)
         let below = NSRect(x: dialog.midX - Self.width / 2, y: dialog.minY - Self.gap - height, width: size.width, height: size.height)
@@ -126,6 +132,7 @@ final class CompanionPanel: NSPanel {
     /// attached rather than towed.
     func follow(windowID: Int) {
         stopFollowing()
+        guard !isDetached else { return }
         followedWindow = windowID
         guard let view = contentView else { return }
         let link = view.displayLink(target: self, selector: #selector(followTick))
@@ -196,7 +203,7 @@ final class CompanionPanel: NSPanel {
         let clamped = min(max(height.rounded(.up), 120), Self.maxHeight)
         guard clamped != contentHeight else { return }
         contentHeight = clamped
-        if let dialogFrame, !session.dialogClosed {
+        if let dialogFrame, !session.dialogClosed, !isDetached {
             apply(targetFrame(besideDialog: dialogFrame, height: clamped))
         } else {
             var frame = self.frame
@@ -217,16 +224,24 @@ final class CompanionPanel: NSPanel {
     private static var standaloneTopLeft: NSPoint?
 
     /// A move while the mouse button is down, and not made by our own
-    /// placement, is the user dragging: remember where they put it, relative
-    /// to the dialog, or on its own when there is none.
+    /// placement, is the user dragging. A deliberate drag wins over our
+    /// placement: the panel lets go of the dialog and stays where they put it.
     @objc private func didMove(_ note: Notification) {
         guard !repositioning, NSEvent.pressedMouseButtons & 1 != 0 else { return }
-        if let dialogFrame, !session.dialogClosed {
-            let dialog = Self.appKitRect(dialogFrame)
-            userOffset = CGPoint(x: frame.minX - dialog.maxX, y: frame.maxY - dialog.maxY)
+        if dialogFrame != nil, !session.dialogClosed {
+            detach()
         } else {
             Self.standaloneTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
         }
+    }
+
+    /// Cuts the tie to the dialog: no more following, and nothing repositions
+    /// the panel again — not the dialog moving, not the content growing.
+    private func detach() {
+        guard !isDetached else { return }
+        isDetached = true
+        stopFollowing()
+        AppLog.shared.info("app", "panel detached by drag")
     }
 
     // MARK: Appearance

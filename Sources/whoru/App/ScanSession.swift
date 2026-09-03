@@ -42,6 +42,8 @@ final class ScanSession: Identifiable {
     var isReplying = false
     var streamingReply = ""
     var dialogClosed = false
+    /// When set, the panel is not auto-dismissed once the dialog closes; only the close button does.
+    var pinned = false
     var decision: UserDecision = .unknown
     var startedAt = Date()
     var isManual = false

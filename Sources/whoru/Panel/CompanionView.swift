@@ -10,6 +10,17 @@ struct CompanionHeader: View {
 
     var body: some View {
         HStack {
+            Button {
+                session.pinned.toggle()
+            } label: {
+                Image(systemName: session.pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(session.pinned ? .primary : .secondary)
+                    .frame(width: 18, height: 18)
+                    .background(session.pinned ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(session.pinned ? "Unpin: allow this to close automatically" : "Pin: keep this open after the dialog closes")
             Label("whoRU", systemImage: "person.fill.questionmark")
                 .labelStyle(.titleAndIcon)
                 .font(.caption2)
