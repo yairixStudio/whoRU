@@ -269,16 +269,20 @@ final class CompanionPanel: NSPanel {
         }
     }
 
-    /// When the dialog closes mid-conversation the panel stays, as a normal window.
+    /// When the dialog closes mid-conversation the panel stays, as a window of
+    /// its own: it activates the app when clicked, moves to the active space
+    /// and stops floating above everything.
+    ///
+    /// It grows no system title bar. The card is the whole appearance of this
+    /// window, its own header carries the pin and the close button, and a
+    /// second, system close button in the same corner was both a duplicate and
+    /// unreachable under the card's content. `closable` stays in the mask
+    /// without one: it draws nothing here, and it is what lets ⌘W through.
     func becomeStandaloneWindow() {
         stopFollowing()
-        styleMask.insert(.titled)
         styleMask.insert(.closable)
-        styleMask.insert(.miniaturizable)
         styleMask.remove(.nonactivatingPanel)
         title = session.subject?.displayName ?? session.prompt.requesterName
-        titlebarAppearsTransparent = true
-        titleVisibility = .visible
         level = .floating
         isFloatingPanel = false
         collectionBehavior = [.moveToActiveSpace]
@@ -286,6 +290,22 @@ final class CompanionPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// ⌘W, the window menu, a close button the window may grow one day: every
+    /// close the system starts ends in the same teardown as the header's own
+    /// button, so a panel that leaves the screen has always let go of its
+    /// session too. `super` is never called: the fade orders the window out.
+    ///
+    /// Only this action-shaped entry point is overridden. An earlier version
+    /// answered `windowShouldClose` — a *question* AppKit may ask at any time,
+    /// while validating a menu item among others — with the dismissal itself,
+    /// and panels vanished a second or two after they appeared.
+    override func performClose(_ sender: Any?) {
+        fadeOut { [weak self] in
+            guard let self else { return }
+            onDismiss?(self)
+        }
+    }
 }
 
 /// Root view: measures the content's natural height, shows a scroll view

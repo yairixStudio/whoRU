@@ -20,6 +20,10 @@ minor bump may change behaviour.
 - A suggested question longer than the panel is wide now wraps instead of
   running past the edge, where the rounded clip swallowed both the text and
   the click.
+- The companion window that stays after a dialog is answered no longer grows a
+  system title bar. Its close button sat in the same corner as the card's own,
+  under the card's content, where it could not be clicked; the card's header is
+  the only chrome now, and ⌘W closes the window like the header's button does.
 - The setup assistant's *Try it now* step keeps its button. It used to turn into
   *Continue* after one press, so the assistant could raise a demo dialog only
   once; the permission is reset before each try, so it can be run as often as
