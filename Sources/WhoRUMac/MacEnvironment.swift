@@ -9,6 +9,7 @@ public enum MacEnvironment {
             SignerIdentityCheck(),
             SignatureIntegrityCheck(),
             GatekeeperCheck(),
+            RevocationCheck(),
             Sha256Check(),
             OfficialManifestCheck(),
             DownloadOriginCheck(),
