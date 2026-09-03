@@ -78,7 +78,7 @@ struct OnboardingView: View {
             aiStep
         case .tryIt:
             stepView(symbol: "sparkles.rectangle.stack", title: "Try it now", text: demoTriggered
-                     ? "A permission dialog for whoRU itself should have appeared, with the companion next to it. That is exactly what happens for any other program."
+                     ? "A permission dialog for whoRU itself should have appeared, with the companion next to it. That is exactly what happens for any other program. Try it again as often as you like."
                      : "Trigger a real, harmless permission dialog for whoRU itself and see the companion appear next to it.")
         case .done:
             stepView(symbol: "checkmark.seal.fill", title: "That’s it", text: "whoRU lives in the menu bar. It appears when a permission dialog does, and stays out of the way otherwise.", tint: .green)
@@ -226,10 +226,17 @@ struct OnboardingView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(detecting)
             case .tryIt:
-                Button("Skip") { goForward() }
-                Button(demoTriggered ? "Continue" : "Try it now") {
-                    if demoTriggered { goForward() } else { demoTriggered = true; AppDelegate.shared?.triggerDemoPrompt() }
-                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                // The demo resets the permission first, so it can be run again
+                // and again: the button that raises a dialog is always here,
+                // whichever time the assistant is opened.
+                if demoTriggered {
+                    Button("Try it again") { AppDelegate.shared?.triggerDemoPrompt() }
+                    Button("Continue") { goForward() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                } else {
+                    Button("Skip") { goForward() }
+                    Button("Try it now") { demoTriggered = true; AppDelegate.shared?.triggerDemoPrompt() }
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                }
             case .done:
                 Button("Done") {
                     model.settings.onboardingCompleted = true

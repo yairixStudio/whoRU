@@ -267,6 +267,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showOnboarding() {
+        // A closed assistant is thrown away rather than reopened where it was
+        // left: the steps are recomputed from what is granted right now.
+        if let window = onboardingWindow, !window.isVisible {
+            window.close()
+            onboardingWindow = nil
+        }
         if onboardingWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 540), styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             window.titlebarAppearsTransparent = true
