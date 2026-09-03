@@ -56,18 +56,28 @@ public enum MacTools {
                 }
             ),
             ToolHandler(
-                tool: AnalystTool(name: "list_open_files", description: "Files the running program currently has open, filtered to user data locations."),
+                tool: AnalystTool(name: "list_open_files", description: "Folders in user data locations where the running program currently has files open, with a count of those files. Folder paths only, never file names."),
                 run: { _, subject in
                     guard let subject, let pid = subject.pid else { return ["error": "the program is not running"] }
                     guard let output = try? await Command.run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-F", "n"], timeout: .seconds(8)) else { return ["error": "lsof failed"] }
-                    let home = FileManager.default.homeDirectoryForCurrentUser.path
-                    let interesting = output.stdout.split(separator: "\n").filter { $0.hasPrefix("n/") }.map { String($0.dropFirst()) }
-                        .filter { $0.hasPrefix(home) || $0.hasPrefix("/Volumes") || $0.hasPrefix("/Users") }
-                        .filter { !$0.contains("/Library/Caches/") && !$0.hasSuffix(".dylib") }
-                        .map { $0.replacingOccurrences(of: home, with: "~") }
-                    return ["files": .array(Array(Set(interesting)).sorted().prefix(40).map { .string($0) }), "summary": .string("\(Set(interesting).count) user files open")]
+                    let paths = output.stdout.split(separator: "\n").filter { $0.hasPrefix("n/") }.map { String($0.dropFirst()) }
+                    let open = openFileFolders(paths, home: FileManager.default.homeDirectoryForCurrentUser.path)
+                    return ["folders": .array(open.folders.map { .string($0) }), "file_count": .number(Double(open.fileCount)), "summary": .string("\(open.fileCount) user files open in \(open.folders.count) folders")]
                 }
             ),
         ]
+    }
+
+    /// The folders of the user files among `paths`, home directory replaced by
+    /// `~`, and how many files there were. File names stay on the machine: the
+    /// model only needs to know where the program is reading, and it may be a
+    /// cloud engine run by another vendor.
+    static func openFileFolders(_ paths: [String], home: String, limit: Int = 25) -> (folders: [String], fileCount: Int) {
+        let files = Set(paths
+            .filter { $0.hasPrefix(home) || $0.hasPrefix("/Volumes") || $0.hasPrefix("/Users") }
+            .filter { !$0.contains("/Library/Caches/") && !$0.hasSuffix(".dylib") })
+        let folders = Set(files.map { ($0 as NSString).deletingLastPathComponent })
+            .map { home.isEmpty ? $0 : $0.replacingOccurrences(of: home, with: "~") }
+        return (Array(folders.sorted().prefix(limit)), files.count)
     }
 }
