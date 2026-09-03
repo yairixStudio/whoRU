@@ -199,3 +199,29 @@ private func sampleRecord(sha: String, service: PermissionService = .downloadsFo
         #expect(lines.last?.contains("logged after") == true)
     }
 }
+
+#if os(macOS)
+/// The property the disclaim flag exists for: TCC attributes a child to its
+/// parent's responsible process unless the parent disclaims it. The child
+/// asks the system itself, through libSystem, who is responsible for it.
+@Suite struct ResponsibleProcessTests {
+    static let script = """
+    import ctypes, os
+    f = ctypes.CDLL(None).responsibility_get_pid_responsible_for_pid
+    f.restype = ctypes.c_int
+    f.argtypes = [ctypes.c_int]
+    print("self" if f(os.getpid()) == os.getpid() else "inherited")
+    """
+
+    @Test func disclaimedChildIsItsOwnResponsibleProcess() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { return }
+        let plain = try await Command.run("/usr/bin/python3", ["-c", Self.script], timeout: .seconds(30))
+        // A python3 stub without the command-line tools exits non-zero; nothing to test then.
+        guard plain.succeeded else { return }
+        let disclaimed = try await Command.run("/usr/bin/python3", ["-c", Self.script], timeout: .seconds(30), disclaimResponsibility: true)
+        #expect(disclaimed.succeeded)
+        #expect(disclaimed.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "self")
+        #expect(plain.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "inherited")
+    }
+}
+#endif
