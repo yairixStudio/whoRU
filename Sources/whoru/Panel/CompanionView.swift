@@ -237,12 +237,12 @@ struct CompanionView: View {
                 Image(systemName: "arrow.triangle.swap").foregroundStyle(.orange)
                 Text("The system says the requester is \(session.subject?.displayName ?? session.prompt.requesterName), not \(from). Checked again for it.")
             case .unconfirmed:
-                Image(systemName: "questionmark.circle").foregroundStyle(.secondary)
-                Text("The system’s record of this request was not found; identity is the resolver’s best match.")
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                Text("macOS has no record of this request. whoRU cannot confirm this is a genuine system prompt rather than a window a program drew to look like one. The evidence below is about \(session.subject?.displayName ?? session.prompt.requesterName) if that is really who asked.")
             }
         }
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(session.identity == .unconfirmed ? .primary : .secondary)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityElement(children: .combine)
     }
