@@ -183,3 +183,19 @@ private func sampleRecord(sha: String, service: PermissionService = .downloadsFo
         #expect(redacted.evidence.first?.facts["p"] == "~/x")
     }
 }
+
+@Suite struct AppLogBufferingTests {
+    @Test func linesLoggedBeforeConfigureReachTheFile() throws {
+        let log = AppLog()
+        log.error("integrity", "logged before the file existed")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whoru-applog-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        log.configure(directory: directory, fileName: "test.log")
+        log.info("app", "logged after")
+        let text = try String(contentsOf: directory.appendingPathComponent("test.log"), encoding: .utf8)
+        let lines = text.split(separator: "\n")
+        #expect(lines.count == 2)
+        #expect(lines.first?.contains("logged before the file existed") == true)
+        #expect(lines.last?.contains("logged after") == true)
+    }
+}

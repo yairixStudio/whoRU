@@ -25,6 +25,8 @@ public final class AppLog: @unchecked Sendable {
     private var handle: FileHandle?
     private var recent: [String] = []
     private let recentLimit = 600
+    /// Lines logged before `configure`, written out as soon as there is a file.
+    private var unflushed: [String] = []
     private let rotateAt = 2 * 1024 * 1024
     private var bytesWritten = 0
 
@@ -58,6 +60,13 @@ public final class AppLog: @unchecked Sendable {
         handle = FileHandle(forWritingAtPath: url.path)
         handle?.seekToEndOfFile()
         bytesWritten = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        // Lines logged before the file existed (the app model is built before
+        // the delegate configures the log) must not be lost.
+        if let handle, !unflushed.isEmpty, let data = (unflushed.joined(separator: "\n") + "\n").data(using: .utf8) {
+            handle.write(data)
+            bytesWritten += data.count
+        }
+        unflushed.removeAll()
         fileURL = url
     }
 
@@ -72,6 +81,10 @@ public final class AppLog: @unchecked Sendable {
         lock.lock()
         recent.append(line)
         if recent.count > recentLimit { recent.removeFirst(recent.count - recentLimit) }
+        if handle == nil {
+            unflushed.append(line)
+            if unflushed.count > recentLimit { unflushed.removeFirst(unflushed.count - recentLimit) }
+        }
         if let handle, let data = (line + "\n").data(using: .utf8) {
             handle.write(data)
             bytesWritten += data.count
