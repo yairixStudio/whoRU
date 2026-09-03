@@ -2,7 +2,7 @@
 # Sends a .pkg, .dmg or .zip to Apple's notary service and staples the
 # ticket, so Gatekeeper opens it on any Mac without a warning.
 #
-#   scripts/notarize.sh build/whoRU-0.1.0.pkg
+#   scripts/notarize.sh build/whoRU-0.2.0.pkg
 #
 # Needs, once per Mac, a notarytool keychain profile (an app-specific
 # password from appleid.apple.com, and the Team ID of the Developer ID):

@@ -8,7 +8,7 @@ set -eu
 
 cd "$(dirname "$0")/.."
 CONFIG="${CONFIG:-release}"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.2.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 # A real certificate gives the app a stable code requirement, so the
 # Accessibility grant survives rebuilds. Ad-hoc signatures change every build.

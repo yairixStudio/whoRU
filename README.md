@@ -23,7 +23,7 @@ whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yo
 
 ## Status
 
-Early, working, unreleased. Built in the open from the [design document](docs/DESIGN.md).
+Early and working. Current version 0.2.0, a security release; see the [changelog](CHANGELOG.md). Built in the open from the [design document](docs/DESIGN.md).
 
 - [x] Core models, dialog text parser with fixtures, hard-evidence scoring, deterministic headline
 - [x] macOS evidence checks: signature identity and integrity, certificate revocation, Gatekeeper and notarization, SHA-256, official release manifest, download origin, install location, launch chain, persistence, Info.plist declarations, entitlements, timestamps, network connections, optional VirusTotal
@@ -99,7 +99,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install
 
-Signed builds are not published yet. Building from source takes a minute and needs macOS 26 or later with Xcode 26 or later:
+Signed and notarized builds of 0.2.0 are on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install), with their SHA-256 checksums. Building from source takes a minute and needs macOS 26 or later with Xcode 26 or later:
 
 ```sh
 git clone https://github.com/yairixStudio/whoRU.git
