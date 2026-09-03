@@ -215,17 +215,62 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         return lowered.contains { text in authenticationWords.contains { text.contains($0) } }
     }
 
+    /// A bundle identifier is the process's own claim and can be copied; the
+    /// platform signature cannot. A known prompt process is one with both.
     private func isKnownPromptProcess(_ pid: pid_t) -> Bool {
-        guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
-        return bundleIdentifiers.contains(bundle)
+        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+        return Self.isSystemDialogProcess(isPlatform: bundle.map { _ in ProcessTrust.isApplePlatformProcess(pid: pid) } ?? false, bundleID: bundle, known: bundleIdentifiers)
+    }
+
+    /// Whether a window owner may be trusted to draw permission prompts: it
+    /// must be one of the platform's dialog processes by identifier and be
+    /// Apple-signed platform code. Pure, so the rule can be tested.
+    public static func isSystemDialogProcess(isPlatform: Bool, bundleID: String?, known: Set<String>) -> Bool {
+        guard isPlatform, let bundleID else { return false }
+        return known.contains(bundleID)
+    }
+
+    /// The origin to report for a window: `.system` for a trusted dialog
+    /// process (`isSystemDialogProcess`), else `.unverified` with what is
+    /// known about the owner.
+    public static func origin(isSystem: Bool, bundleID: String?, owner: String, path: String?, signer: String?) -> DialogOrigin {
+        if isSystem, let bundleID { return .system(bundleID: bundleID) }
+        return .unverified(owner: owner, path: path, signer: signer)
+    }
+
+    /// One line about who signed the window's owner, for the panel.
+    static func signerSummary(_ info: SignatureInfo) -> String {
+        switch info.kind {
+        case .apple: "Apple"
+        case .unsigned: "unsigned"
+        case .adhoc: "ad-hoc signature, no publisher"
+        default: info.leafSummary ?? info.kind.rawValue
+        }
     }
 
     private func emit(_ info: WindowInfo, title: String, body: String?, buttons: [String], started: Date) {
         let id = "\(info.pid)-\(info.number)"
         tracked[info.number] = Tracked(id: id, pid: info.pid, frame: info.frame)
+        let origin = origin(of: info)
         log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
         AppLog.shared.info("watcher", "prompt in \(info.owner) (pid \(info.pid), window \(info.number), layer \(info.layer)) read in \(elapsedMs(since: started)) ms: \(title.isEmpty ? "(no text)" : title)")
-        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons, nativeWindowID: info.number)))
+        if case .unverified(let owner, let path, let signer) = origin {
+            AppLog.shared.warn("watcher", "window \(info.number) reads like a permission prompt but was drawn by \(owner) (pid \(info.pid), \(path ?? "no path"), signer \(signer ?? "unknown")), not by a system dialog process")
+        }
+        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons, nativeWindowID: info.number, origin: origin)))
+    }
+
+    /// Who drew the window, from facts the owner cannot forge: the owner pid
+    /// from the window server, its executable from the kernel, its signature
+    /// from Security.framework. The signature of a non-system owner is read
+    /// here, once, only for a window that already reads like a prompt.
+    private func origin(of info: WindowInfo) -> DialogOrigin {
+        let bundle = NSRunningApplication(processIdentifier: info.pid)?.bundleIdentifier
+        let isSystem = Self.isSystemDialogProcess(isPlatform: ProcessTrust.isApplePlatformProcess(pid: info.pid), bundleID: bundle, known: bundleIdentifiers)
+        if isSystem { return .system(bundleID: bundle ?? "") }
+        let path = ProcessTrust.executablePath(pid: info.pid)
+        let signer = path.map { Self.signerSummary(CodeSignature.inspectNow(path: $0)) }
+        return Self.origin(isSystem: false, bundleID: bundle, owner: info.owner, path: path, signer: signer)
     }
 
     /// Current bounds of one window, cheap enough to call every frame.

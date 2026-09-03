@@ -25,7 +25,10 @@ public enum L10n {
             "headline.doNotAllow": "Do not allow",
             "headline.unresolved": "Not identified",
             "headline.checking": "Checking…",
+            "headline.notSystemDialog": "Not a system dialog",
 
+            "reason.dialog.fake": "This window is not a macOS permission dialog. It was drawn by {owner}{signer}.",
+            "reason.dialog.fake.signer": ", signed by {signer}",
             "reason.signature.broken": "The code signature is broken: the file was modified after it was signed.",
             "reason.impersonation": "It uses the name “{name}” but is not signed by that publisher.",
             "reason.virustotal.flagged": "{count} antivirus engines flag this file.",
@@ -72,7 +75,10 @@ public enum L10n {
             "headline.doNotAllow": "אל תאשר",
             "headline.unresolved": "לא זוהה",
             "headline.checking": "בודק…",
+            "headline.notSystemDialog": "לא דיאלוג של המערכת",
 
+            "reason.dialog.fake": "החלון הזה אינו דיאלוג הרשאות של macOS. הוא צויר על ידי {owner}{signer}.",
+            "reason.dialog.fake.signer": ", חתום על ידי {signer}",
             "reason.signature.broken": "החתימה שבורה: הקובץ שונה אחרי שנחתם.",
             "reason.impersonation": "משתמש בשם ״{name}״ אבל לא חתום על ידי המפרסם הזה.",
             "reason.virustotal.flagged": "{count} מנועי אנטי־וירוס מזהים את הקובץ.",

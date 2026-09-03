@@ -53,6 +53,24 @@ public protocol ApplicationFinder: Sendable {
     func applications(named name: String) async throws -> [String]
 }
 
+/// Who drew a dialog window. Any program can draw a window that reads like a
+/// permission prompt; only the platform's own dialog process can put a real
+/// one on screen. The watcher settles this from facts a program cannot forge
+/// (the window's owner process and that process's code signature), so that a
+/// panel is never a green badge next to an impostor.
+public enum DialogOrigin: Sendable, Hashable, Codable {
+    /// Drawn by a platform process known to show permission prompts.
+    case system(bundleID: String)
+    /// Drawn by something else: the owner's name, its executable and a
+    /// summary of who signed it, for the panel to show.
+    case unverified(owner: String, path: String?, signer: String?)
+
+    public var isSystem: Bool {
+        if case .system = self { return true }
+        return false
+    }
+}
+
 /// A permission dialog as observed on screen.
 public struct DialogInstance: Sendable, Hashable {
     public var id: String
@@ -64,8 +82,9 @@ public struct DialogInstance: Sendable, Hashable {
     /// The platform's window handle (CGWindowID on macOS), so a companion can
     /// follow the window directly at display rate.
     public var nativeWindowID: Int?
+    public var origin: DialogOrigin
 
-    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = [], nativeWindowID: Int? = nil) {
+    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = [], nativeWindowID: Int? = nil, origin: DialogOrigin = .system(bundleID: "")) {
         self.id = id
         self.pid = pid
         self.frame = frame
@@ -73,6 +92,7 @@ public struct DialogInstance: Sendable, Hashable {
         self.body = body
         self.buttons = buttons
         self.nativeWindowID = nativeWindowID
+        self.origin = origin
     }
 }
 

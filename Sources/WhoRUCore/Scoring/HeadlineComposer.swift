@@ -18,7 +18,9 @@ public struct HeadlineComposer: Sendable {
         defer { _ = sentence }
         switch result.score {
         case .red:
-            title = L10n.text("headline.doNotAllow", locale: locale)
+            // A window that is not a permission dialog at all gets its own
+            // title: there is nothing to allow or deny, only a window to close.
+            title = L10n.text(first?.code == "dialog.fake" ? "headline.notSystemDialog" : "headline.doNotAllow", locale: locale)
             sentence = L10n.text("reason.\(first?.code ?? "signature.broken")", locale: locale, params)
         case .green:
             if result.isSystemComponent {
@@ -117,6 +119,9 @@ public struct VerdictPresentation: Sendable, Hashable {
                 ? forVerdict(.unknown, locale: locale)
                 : forVerdict(.suspicious, locale: locale)
         case .red:
+            if result.reasons.first?.code == "dialog.fake" {
+                return VerdictPresentation(title: L10n.text("headline.notSystemDialog", locale: locale), symbol: "xmark.shield.fill", color: "red")
+            }
             return forVerdict(.malicious, locale: locale)
         }
     }

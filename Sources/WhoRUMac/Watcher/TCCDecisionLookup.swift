@@ -1,6 +1,31 @@
 import Foundation
 import WhoRUCore
 
+/// One process named in a request's attribution line, as `tccd` describes
+/// it: `{TCCDProcess: identifier=…, pid=…, binary_path=…}`.
+public struct TCCAttribution: Sendable, Hashable {
+    /// Bundle identifier, or the executable path for a bare binary.
+    public var identifier: String?
+    public var pid: Int32?
+    public var binaryPath: String?
+    /// Present on the responsible process when the file that was launched is
+    /// not the one running (a command-line tool with an app wrapper).
+    public var responsiblePath: String?
+
+    public init(identifier: String? = nil, pid: Int32? = nil, binaryPath: String? = nil, responsiblePath: String? = nil) {
+        self.identifier = identifier
+        self.pid = pid
+        self.binaryPath = binaryPath
+        self.responsiblePath = responsiblePath
+    }
+
+    /// The core's view of the same process, for identity confirmation.
+    public var identity: AttributedIdentity? {
+        guard let pid else { return nil }
+        return AttributedIdentity(pid: pid, binaryPath: binaryPath, responsiblePath: responsiblePath, identifier: identifier)
+    }
+}
+
 /// One permission request as `tccd` logged it: the `AUTHREQ_*` lines that
 /// share a message id. The system writes these for every request, including
 /// the ones it put a dialog on screen for, and the result line carries the
@@ -13,6 +38,13 @@ public struct TCCAuthEvent: Sendable, Hashable {
     /// the attribution and subject lines: responsible, accessing, requesting.
     public var identifiers: [String] = []
     public var binaryPaths: [String] = []
+    /// The process the dialog is about: what the user launched. A tool run
+    /// from Terminal produces a dialog about Terminal, and this says so.
+    public var responsible: TCCAttribution?
+    /// The process that touched the protected resource.
+    public var accessing: TCCAttribution?
+    /// The process that asked tccd, often a system daemon on behalf of the others.
+    public var requesting: TCCAttribution?
     public var authValue: Int?
     public var authReason: Int?
     /// A prompting line was logged for this request.
@@ -113,6 +145,10 @@ public enum TCCLogParser {
         } else if message.hasPrefix("AUTHREQ_ATTRIBUTION") {
             event.identifiers += allMatches(#"identifier=([^,}\s]+)"#, in: message)
             event.binaryPaths += allMatches(#"binary_path=(.+?)(?=\}|, [a-z_]+=)"#, in: message)
+            let blocks = attributionBlocks(in: message)
+            if event.responsible == nil { event.responsible = blocks["responsible"] }
+            if event.accessing == nil { event.accessing = blocks["accessing"] }
+            if event.requesting == nil { event.requesting = blocks["requesting"] }
         } else if message.hasPrefix("AUTHREQ_SUBJECT") {
             if let subject = firstMatch(#"subject=([^,]+)"#, in: message) { event.identifiers.append(subject) }
         } else if message.hasPrefix("AUTHREQ_RESULT") {
@@ -123,6 +159,39 @@ public enum TCCLogParser {
             if event.service == nil { event.service = firstMatch(#"service=(kTCCService[A-Za-z0-9_]+)"#, in: message) }
         }
         byID[id] = event
+    }
+
+    /// The `role={TCCDProcess: …}` blocks of an attribution line, keyed by
+    /// role. The first block of a role wins: the log sometimes repeats
+    /// `accessing` with its fields hidden.
+    static func attributionBlocks(in message: String) -> [String: TCCAttribution] {
+        guard let regex = try? NSRegularExpression(pattern: #"(responsible|accessing|requesting)=\{TCCDProcess: ([^}]*)\}"#) else { return [:] }
+        var blocks: [String: TCCAttribution] = [:]
+        for match in regex.matches(in: message, range: NSRange(message.startIndex..., in: message)) {
+            guard let roleRange = Range(match.range(at: 1), in: message), let bodyRange = Range(match.range(at: 2), in: message) else { continue }
+            let role = String(message[roleRange])
+            guard blocks[role] == nil else { continue }
+            let fields = attributionFields(String(message[bodyRange]))
+            blocks[role] = TCCAttribution(
+                identifier: fields["identifier"],
+                pid: fields["pid"].flatMap { Int32($0) },
+                binaryPath: fields["binary_path"],
+                responsiblePath: fields["responsible_path"]
+            )
+        }
+        return blocks
+    }
+
+    /// `key=value, key=value` where a value may contain spaces but a key never does.
+    private static func attributionFields(_ body: String) -> [String: String] {
+        guard let regex = try? NSRegularExpression(pattern: #"([a-z_]+)=(.*?)(?=, [a-z_]+=|$)"#) else { return [:] }
+        var fields: [String: String] = [:]
+        for match in regex.matches(in: body, range: NSRange(body.startIndex..., in: body)) {
+            guard let keyRange = Range(match.range(at: 1), in: body), let valueRange = Range(match.range(at: 2), in: body) else { continue }
+            let value = body[valueRange].trimmingCharacters(in: .whitespaces)
+            if !value.isEmpty { fields[String(body[keyRange])] = value }
+        }
+        return fields
     }
 
     private static func firstMatch(_ pattern: String, in text: String) -> String? {

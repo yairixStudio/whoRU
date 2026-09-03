@@ -68,13 +68,23 @@ struct CompanionView: View {
         VStack(alignment: .leading, spacing: 10) {
             identity
             verdictRow
-            if session.hardScore != nil {
-                explainSection
-                evidenceSection
-                aiSection
-            }
-            if session.dialogClosed, !session.isManual {
-                decisionRow
+            if session.isFakeDialog {
+                fakeDialogSection
+            } else {
+                if session.identityApplies, session.hardScore != nil {
+                    identityRow
+                }
+                if !session.otherCandidatePaths.isEmpty {
+                    alsoMatchesRow
+                }
+                if session.hardScore != nil {
+                    explainSection
+                    evidenceSection
+                    aiSection
+                }
+                if session.dialogClosed, !session.isManual {
+                    decisionRow
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -92,15 +102,22 @@ struct CompanionView: View {
 
     // MARK: Identity
 
+    /// The program the window belongs to. For an impostor that is the process
+    /// that drew the window, not the name the window claims.
+    private var fakeOwner: (owner: String, path: String?, signer: String?)? {
+        if case .unverified(let owner, let path, let signer) = session.dialogOrigin { return (owner, path, signer) }
+        return nil
+    }
+
     private var identity: some View {
         HStack(spacing: 10) {
-            AppIcon(path: session.subject?.verificationPath)
+            AppIcon(path: fakeOwner.map { $0.path.flatMap(BundleInfo.enclosingBundlePath) ?? $0.path } ?? session.subject?.verificationPath)
                 .frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.subject?.displayName ?? session.prompt.requesterName)
+                Text(fakeOwner?.owner ?? session.subject?.displayName ?? session.prompt.requesterName)
                     .font(.headline)
                     .lineLimit(1)
-                Text(subtitle)
+                Text(fakeOwner.map { _ in "claims to be “\(session.prompt.requesterName)”" } ?? subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -201,6 +218,93 @@ struct CompanionView: View {
         .padding(.top, 2)
     }
 
+    // MARK: Identity
+
+    /// What the system's own record of the request says about who asked.
+    /// The resolver guesses from the wording; this row says whether the
+    /// system agreed, is still being read, or kept no record.
+    @ViewBuilder
+    private var identityRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            switch session.identity {
+            case .pending:
+                ProgressView().controlSize(.mini)
+                Text("Waiting for the system’s own record of this request…")
+            case .confirmed(let pid, let path):
+                Image(systemName: "checkmark.seal").foregroundStyle(.green)
+                Text("Confirmed by macOS: \(session.subject?.displayName ?? (path as NSString).lastPathComponent), pid \(String(pid))")
+            case .corrected(let from):
+                Image(systemName: "arrow.triangle.swap").foregroundStyle(.orange)
+                Text("The system says the requester is \(session.subject?.displayName ?? session.prompt.requesterName), not \(from). Checked again for it.")
+            case .unconfirmed:
+                Image(systemName: "questionmark.circle").foregroundStyle(.secondary)
+                Text("The system’s record of this request was not found; identity is the resolver’s best match.")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The resolver's other confident matches for the dialog's name, so a
+    /// collision is visible and the user can see what else it could be.
+    private var alsoMatchesRow: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Also matches:").font(.caption).foregroundStyle(.tertiary)
+            ForEach(session.otherCandidatePaths, id: \.self) { path in
+                Text(Self.abbreviated(path))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .environment(\.layoutDirection, .leftToRight)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    static func abbreviated(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard !home.isEmpty, path.hasPrefix(home) else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
+    /// For a window that only pretends to be a dialog: who drew it and who
+    /// signed them, as rows the user can open, and nothing to ask the AI.
+    private var fakeDialogSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(session.evidence) { item in
+                Button { showRaw = item } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: symbol(for: item.status))
+                            .foregroundStyle(color(for: item.status))
+                            .font(.caption)
+                            .frame(width: 14)
+                        Text(item.key == "window.owner" ? "drawn by" : "signed by")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 96, alignment: .leading)
+                        Text(item.key == "window.owner" ? Self.abbreviated(item.summary) : item.summary)
+                            .font(.callout)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .environment(\.layoutDirection, .leftToRight)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(item.status.rawValue): \(item.key.rawValue), \(item.summary)")
+            }
+            if let path = fakeOwner?.path {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .padding(.top, 4)
+            }
+        }
+    }
+
     // MARK: Explain
 
     @ViewBuilder
@@ -267,7 +371,7 @@ struct CompanionView: View {
                 }
                 HStack(spacing: 8) {
                     if let record = session.record {
-                        Button("What was sent?") { showRaw = Self.bundleItem(for: record) }
+                        Button("What was sent?") { showRaw = Self.bundleItem(for: record, toolLog: session.toolLog) }
                             .buttonStyle(.bordered).controlSize(.small)
                     }
                     if let subject = session.subject {
@@ -289,12 +393,23 @@ struct CompanionView: View {
         }
     }
 
-    static func bundleItem(for record: ScanRecord) -> EvidenceItem {
+    /// The bundle the model received, followed by every tool it called and
+    /// what came back, so the sheet is the whole exchange, not just the opening.
+    static func bundleItem(for record: ScanRecord, toolLog: [String] = []) -> EvidenceItem {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         let bundle = EvidenceBundle(prompt: record.prompt, subject: record.subject, candidates: record.candidates, evidence: record.evidence,
                                     hardScore: record.hardScore ?? HardScoreResult(score: .amber, reasons: []))
-            .redactedForModel(homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path)
-        let json = (try? JSONValue(encoding: bundle).string(pretty: true)) ?? "{}"
-        return EvidenceItem(key: "what_was_sent", status: .info, weight: .base, summary: "The exact JSON the AI received", raw: json, method: "evidence bundle")
+            .redactedForModel(homeDirectory: home)
+        var text = (try? JSONValue(encoding: bundle).string(pretty: true)) ?? "{}"
+        var calls = toolLog
+        for message in record.messages where !message.toolCalls.isEmpty {
+            calls.append("during the \(message.role.rawValue) turn “\(message.text.prefix(60))”:")
+            calls += message.toolCalls.map { "  \($0)" }
+        }
+        if !calls.isEmpty {
+            text += "\n\n--- tool calls ---\n" + calls.map { $0.replacingOccurrences(of: home, with: "~") }.joined(separator: "\n")
+        }
+        return EvidenceItem(key: "what_was_sent", status: .info, weight: .base, summary: "The exact JSON the AI received, and the tools it called", raw: text, method: "evidence bundle")
     }
 
     // MARK: AI

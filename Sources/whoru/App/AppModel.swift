@@ -214,6 +214,13 @@ final class AppModel {
         let session = ScanSession(id: dialog.id, dialog: dialog, prompt: prompt, rawTitle: dialog.title)
         sessions.append(session)
         lastSession = session
+        // A window that reads like a prompt but was not drawn by a system
+        // dialog process is an impostor. The pipeline is not run: scanning the
+        // program the window names would put a green badge next to a fake.
+        if case .unverified(let owner, let path, let signer) = dialog.origin {
+            markFakeDialog(session, owner: owner, path: path, signer: signer)
+            return session
+        }
         // The same program asking for the same thing again within a minute
         // (a cascade of prompts, or a re-shown dialog) reuses the scan in flight
         // instead of starting another model run.
@@ -249,7 +256,34 @@ final class AppModel {
         return session
     }
 
-    private func run(_ session: ScanSession, presetSubject: Subject?) {
+    /// Scores a window that only pretends to be a permission dialog: red, no
+    /// pipeline, no model. The panel names the program that drew it.
+    private func markFakeDialog(_ session: ScanSession, owner: String, path: String?, signer: String?) {
+        let prompt = session.prompt
+        let signerClause = signer.map { L10n.text("reason.dialog.fake.signer", locale: prompt.locale, ["signer": $0]) } ?? ""
+        let hard = HardScoreResult(score: .red, reasons: [ScoreReason(code: "dialog.fake", params: ["owner": owner, "signer": signerClause])])
+        session.hardScore = hard
+        session.headline = HeadlineComposer().headline(for: hard, subject: nil, prompt: prompt, locale: prompt.locale)
+        session.evidence = [
+            EvidenceItem(key: "window.owner", status: .fail, weight: .decisive, summary: path ?? owner,
+                         raw: "owner: \(owner)\npid: \(session.dialog?.pid ?? 0)\nexecutable: \(path ?? "unknown")", method: "CGWindowListCopyWindowInfo, proc_pidpath"),
+            EvidenceItem(key: "window.signer", status: signer == nil ? .warn : .info, weight: .high, summary: signer ?? "unknown",
+                         raw: signer, method: "SecStaticCodeCheckValidity, SecCodeCopySigningInformation"),
+        ]
+        session.analysis = .skipped("not a system dialog")
+        session.identity = .unconfirmed
+        AppLog.shared.warn("app", "fake dialog: “\(prompt.requesterName)” \(prompt.service.shortName) drawn by \(owner) (\(path ?? "no path"), \(signer ?? "unknown signer")); no scan run")
+    }
+
+    private func run(_ session: ScanSession, presetSubject: Subject?, attribution known: AttributedIdentity? = nil) {
+        // The system's own record of the request is read alongside the
+        // pipeline, once per dialog; a rescan after a correction reuses it.
+        var lookup: Task<AttributedIdentity?, Never>?
+        if known == nil, presetSubject == nil, session.identityApplies {
+            let service = session.prompt.service
+            let since = session.startedAt
+            lookup = Task.detached(priority: .utility) { await IdentityLookup.attribution(service: service, since: since)?.responsible?.identity }
+        }
         Task {
             let env = await environment()
             let pipeline = ScanPipeline(environment: env)
@@ -257,16 +291,77 @@ final class AppModel {
             let record = await pipeline.run(prompt: prompt, presetSubject: presetSubject) { event in
                 Task { @MainActor in session.apply(event) }
             }
-            let withSlowChecks = await pipeline.runSlowChecks(record: record) { event in
+            async let slow = pipeline.runSlowChecks(record: record) { event in
                 Task { @MainActor in session.apply(event) }
             }
+            // Identity is reconciled as soon as the record exists, while the
+            // slow checks are still out, so the panel does not wait for them.
+            var attributed = known
+            if attributed == nil, let lookup { attributed = await lookup.value }
+            let outcome = await reconcileIdentity(attributed, record: session.record ?? record, for: session, strictness: env.settings.strictness, locale: env.locale)
+            if case .corrected(let subject) = outcome, known == nil {
+                _ = await slow
+                let old = session.subject?.displayName ?? prompt.requesterName
+                AppLog.shared.info("identity", "“\(prompt.requesterName)” \(prompt.service.shortName): the system attributes the request to \(subject.path) (pid \(attributed?.pid ?? -1)), not to \(session.subject?.path ?? "nothing"); scanning again for it")
+                session.resetForRescan()
+                session.identity = .corrected(from: old)
+                session.identityCorrected = true
+                run(session, presetSubject: subject, attribution: attributed)
+                return
+            }
+            let withSlowChecks = await slow
             // The session may have moved on meanwhile (a verdict asked for by
             // hand, the decision): add the slow checks to it, do not replace it.
-            let live = withSlowChecks.filled(from: session.record ?? withSlowChecks)
+            var live = withSlowChecks.filled(from: session.record ?? withSlowChecks)
+            if let attributed = session.attribution, case .confirmed(let confirmed) = IdentityConfirmation.apply(to: live, attributed: attributed, running: session.runningCode, strictness: env.settings.strictness, locale: env.locale) {
+                live = confirmed
+            }
             session.record = live
             if live != withSlowChecks { try? await store.save(live) }
             monthlySpend = (try? await store.monthlySpend()) ?? 0
         }
+    }
+
+    /// Applies the system's attribution of the request to a finished record:
+    /// confirms the identity (with a check of the running process), or says
+    /// the scan was about the wrong program, or leaves it unconfirmed. Never
+    /// waits: a missing attribution is a normal outcome.
+    private func reconcileIdentity(_ attributed: AttributedIdentity?, record: ScanRecord, for session: ScanSession, strictness: Strictness, locale: String) async -> IdentityConfirmation.Outcome {
+        guard session.identityApplies else { return .unconfirmed }
+        guard let attributed else {
+            if session.identity == .pending { session.identity = .unconfirmed }
+            return .unconfirmed
+        }
+        if let subject = record.subject, IdentityConfirmation.names(subject, attributed: attributed), session.runningCode == nil {
+            // The file that runs is what the process is compared with; the
+            // bundle around it is what the evidence checks sealed.
+            let pid = attributed.pid
+            let diskPath = attributed.binaryPath ?? subject.path
+            let info = await Task.detached(priority: .userInitiated) { RunningCode.validate(pid: pid, diskPath: diskPath) }.value
+            session.runningCode = info.facts
+            AppLog.shared.info("identity", "running code of pid \(pid): valid \(info.valid), matches disk \(info.matchesDisk.map(String.init) ?? "n/a")\(info.error.map { " (\($0))" } ?? "") · \(info.path ?? diskPath)")
+        }
+        let outcome = IdentityConfirmation.apply(to: record, attributed: attributed, running: session.runningCode, strictness: strictness, locale: locale)
+        switch outcome {
+        case .confirmed(let confirmed):
+            session.attribution = attributed
+            session.adopt(confirmed: confirmed)
+            let path = attributed.path ?? confirmed.subject?.path ?? "?"
+            if !session.identityCorrected { session.identity = .confirmed(pid: attributed.pid, path: path) }
+            try? await store.save(confirmed)
+            AppLog.shared.info("identity", "identity confirmed: “\(session.prompt.requesterName)” is \(path) (pid \(attributed.pid)) · score \(confirmed.hardScore?.score.rawValue ?? "?")\(confirmed.verdictRejected == IdentityConfirmation.verdictDroppedReason ? " · verdict withdrawn" : "")")
+        case .corrected(let subject):
+            if session.identityCorrected {
+                // Already rescanned for the program the system named and it
+                // still does not match: say so rather than loop.
+                AppLog.shared.warn("identity", "attribution names \(subject.path) but the rescan resolved \(record.subject?.path ?? "nothing"); leaving identity unconfirmed")
+                session.identity = .unconfirmed
+                return .unconfirmed
+            }
+        case .unconfirmed:
+            session.identity = .unconfirmed
+        }
+        return outcome
     }
 
     /// Runs the AI on a scan that was scored without it, because the user
@@ -339,7 +434,7 @@ final class AppModel {
     /// to its buttons only when nothing is found.
     func detectDecision(for session: ScanSession) {
         guard session.decisionLookup == .idle else { return }
-        guard session.dialog != nil, !session.isManual, session.decision == .unknown, session.prompt.service.tccServiceName != nil else {
+        guard session.dialog != nil, !session.isManual, !session.isFakeDialog, session.decision == .unknown, session.prompt.service.tccServiceName != nil else {
             session.decisionLookup = .notFound
             return
         }

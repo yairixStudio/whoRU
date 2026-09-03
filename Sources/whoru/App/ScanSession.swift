@@ -54,15 +54,92 @@ final class ScanSession: Identifiable {
     /// `user` or `system-log`; see `ScanRecord.decisionSource`.
     var decisionSource: String?
 
+    /// Who drew the dialog. Anything but a system dialog process is an
+    /// impostor, and the session is about the impostor, not about the
+    /// program the window names.
+    var dialogOrigin: DialogOrigin
+
+    /// Whether the system's own record of the request has named the program
+    /// yet, and whether it agreed with the resolver.
+    enum IdentityState: Equatable {
+        case pending
+        case confirmed(pid: Int32, path: String)
+        /// The system named another program; the scan was redone for it.
+        case corrected(from: String)
+        case unconfirmed
+    }
+
+    var identity: IdentityState = .pending
+    /// Set once the scan has been redone for the program the system named.
+    var identityCorrected = false
+    /// The attribution that was applied, kept so the merged record after the
+    /// slow checks can be reconciled the same way.
+    var attribution: AttributedIdentity?
+    var runningCode: RunningCodeFacts?
+    /// Tool calls the model made while analyzing, with their results, in
+    /// order, for “What was sent?”.
+    var toolLog: [String] = []
+
     init(id: String, dialog: DialogInstance?, prompt: PermissionPrompt, rawTitle: String) {
         self.id = id
         self.dialog = dialog
         self.prompt = prompt
         self.rawTitle = rawTitle
+        self.dialogOrigin = dialog?.origin ?? .system(bundleID: "")
     }
 
     var isScanning: Bool { hardScore == nil }
     var chatActive: Bool { !messages.isEmpty || !draft.isEmpty || isReplying }
+
+    var isFakeDialog: Bool { !dialogOrigin.isSystem }
+
+    /// Whether the system keeps a record of this request that can name the
+    /// program: a real dialog, for a permission the system tracks.
+    var identityApplies: Bool { dialog != nil && !isManual && !isFakeDialog && prompt.service.tccServiceName != nil }
+
+    /// Paths of the resolver's other confident matches, so a collision is
+    /// visible even when the score already settled.
+    var otherCandidatePaths: [String] {
+        let chosen = subject?.path
+        var seen: Set<String> = []
+        return candidates.filter { $0.path != chosen && seen.insert($0.path).inserted }.map(\.path)
+    }
+
+    /// Takes the record the identity confirmation produced: new evidence
+    /// rows, a new score and headline, and possibly a verdict withdrawn.
+    func adopt(confirmed: ScanRecord) {
+        record = confirmed
+        for item in confirmed.evidence where item.key == .identity || item.key == .runningCode {
+            apply(.evidence(item))
+        }
+        if let hard = confirmed.hardScore { hardScore = hard }
+        if let head = confirmed.deterministicHeadline { headline = head }
+        if confirmed.verdict == nil, verdict != nil, let reason = confirmed.verdictRejected {
+            verdict = nil
+            partialHeadline = nil
+            analysis = .rejected(reason)
+        }
+    }
+
+    /// Clears the results of a scan about the wrong program before the same
+    /// session is scanned again for the right one.
+    func resetForRescan() {
+        subject = nil
+        candidates = []
+        evidence = []
+        hardScore = nil
+        headline = nil
+        partialHeadline = nil
+        verdict = nil
+        analysis = .idle
+        toolActivity = nil
+        record = nil
+        fromCache = false
+        cachedAt = nil
+        messages = []
+        toolLog = []
+        runningCode = nil
+    }
 
     /// The scan is scored, stored, and the AI has not spoken about it yet.
     var canAskAI: Bool { record != nil && hardScore != nil && verdict == nil && analysis != .thinking && !isReplying }
@@ -100,11 +177,14 @@ final class ScanSession: Identifiable {
         verdict = other.verdict
         analysis = other.analysis
         record = other.record
+        identity = other.identity
         mirrorTask?.cancel()
         mirrorTask = Task { [weak self, weak other] in
             while !Task.isCancelled, let self, let other {
-                if self.verdict != other.verdict || self.evidence.count != other.evidence.count || self.analysis != other.analysis || self.record?.id != other.record?.id {
+                if self.verdict != other.verdict || self.evidence.count != other.evidence.count || self.analysis != other.analysis || self.record?.id != other.record?.id
+                    || self.identity != other.identity || self.hardScore != other.hardScore {
                     self.subject = other.subject
+                    self.candidates = other.candidates
                     self.evidence = other.evidence
                     self.hardScore = other.hardScore
                     self.headline = other.headline
@@ -112,6 +192,8 @@ final class ScanSession: Identifiable {
                     self.verdict = other.verdict
                     self.analysis = other.analysis
                     self.record = other.record
+                    self.identity = other.identity
+                    self.identityCorrected = other.identityCorrected
                 }
                 if other.record?.finishedAt != nil, other.analysis != .thinking { break }
                 try? await Task.sleep(for: .milliseconds(250))
@@ -143,8 +225,12 @@ final class ScanSession: Identifiable {
             switch a {
             case .started: analysis = .thinking
             case .partialHeadline(let h): partialHeadline = h
-            case .toolCall(let name, _): toolActivity = name
-            case .toolResult(_, let summary): toolActivity = summary
+            case .toolCall(let name, let input):
+                toolActivity = name
+                toolLog.append("→ \(name) \(input.string())")
+            case .toolResult(let name, let summary):
+                toolActivity = summary
+                toolLog.append("← \(name): \(summary)")
             case .text, .usage: break
             }
         case .verdict(let v):
