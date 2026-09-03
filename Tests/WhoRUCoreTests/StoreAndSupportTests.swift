@@ -120,6 +120,50 @@ private func sampleRecord(sha: String, service: PermissionService = .downloadsFo
             _ = try await Command.run("/nonexistent/binary", [])
         }
     }
+
+    // The disclaimed path is a separate implementation (posix_spawn); it must
+    // keep every part of the contract the Process path has.
+
+    @Test func disclaimedReturnsOutput() async throws {
+        let output = try await Command.run("/bin/echo", ["hello", "; rm -rf /"], disclaimResponsibility: true)
+        #expect(output.succeeded)
+        #expect(output.status == 0)
+        #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hello ; rm -rf /")
+        #expect(output.stderr.isEmpty)
+    }
+
+    @Test func disclaimedPropagatesExitStatus() async throws {
+        let output = try await Command.run("/usr/bin/false", [], disclaimResponsibility: true)
+        #expect(!output.succeeded)
+        #expect(output.status == 1)
+        #expect(!output.timedOut)
+    }
+
+    @Test func disclaimedHonoursEnvironmentAndWorkingDirectory() async throws {
+        let env = try await Command.run("/usr/bin/env", [], environment: ["WHORU_TEST": "marker", "PATH": "/usr/bin:/bin"], disclaimResponsibility: true)
+        #expect(env.succeeded)
+        let lines = env.stdout.split(separator: "\n").map(String.init)
+        #expect(lines.contains("WHORU_TEST=marker"))
+        #expect(!lines.contains { $0.hasPrefix("HOME=") })
+
+        let pwd = try await Command.run("/bin/pwd", [], workingDirectory: "/usr/bin", disclaimResponsibility: true)
+        #expect(pwd.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "/usr/bin")
+    }
+
+    @Test func disclaimedCapturesBothStreamsWithoutDeadlock() async throws {
+        // dd writes 200 KB to stdout and its statistics to stderr; larger than a pipe buffer on either side.
+        let output = try await Command.run("/bin/dd", ["if=/dev/zero", "bs=1024", "count=200"], disclaimResponsibility: true)
+        #expect(output.succeeded)
+        #expect(output.stdout.utf8.count == 200 * 1024)
+        #expect(output.stderr.contains("200"))
+    }
+
+    @Test func disclaimedTimesOut() async throws {
+        let output = try await Command.run("/bin/sleep", ["5"], timeout: .milliseconds(200), disclaimResponsibility: true)
+        #expect(output.timedOut)
+        #expect(!output.succeeded)
+        #expect(output.durationMs < 3000)
+    }
 }
 
 @Suite struct BundleRedactionTests {
