@@ -519,7 +519,15 @@ final class AppModel {
     func canChat(_ session: ScanSession) -> Bool {
         guard session.record != nil else { return false }
         if session.record?.analystSession != nil { return true }
-        return session.hardScore != nil && onDemandAgents.contains { $0 != .none }
+        return session.hardScore != nil && hasUsableAgent
+    }
+
+    /// Whether any agent would actually answer right now. With an agent chosen
+    /// that is `currentAnalystID`: the environment resolved to something usable,
+    /// falling back on its own if the chosen one is not installed. With the
+    /// agent off it is the detected list, which is already filtered to usable.
+    var hasUsableAgent: Bool {
+        settings.engine == .none ? onDemandAgents.contains { $0 != .none } : currentAnalystID != nil
     }
 
     /// The agent a question would go to, named for the field's tooltip.
