@@ -119,7 +119,7 @@ public struct ScanPipeline: Sendable {
         record.evidence = evidence
 
         // 3. Score and headline, both aware of what happened last time.
-        let hard = HardScoreEngine(strictness: env.settings.strictness).score(evidence, subject: resolved.subject, prompt: prompt, history: history)
+        let hard = HardScoreEngine(strictness: env.settings.strictness).score(evidence, subject: resolved.subject, prompt: prompt, history: history, candidates: resolved.candidates)
         let headline = HeadlineComposer().headline(for: hard, subject: resolved.subject, prompt: prompt, locale: env.locale, history: history)
         record.hardScore = hard
         record.deterministicHeadline = headline

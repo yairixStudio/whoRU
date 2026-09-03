@@ -207,3 +207,105 @@ private let subject = Subject(path: "/Applications/Thing.app/Contents/MacOS/Thin
         #expect(VerdictPresentation.forVerdict(.malicious, locale: "en").color == "red")
     }
 }
+
+// MARK: - Identity, Gatekeeper and running-code rules
+
+private let notarizedKnownPublisher: [EvidenceItem] = [
+    item(.signerIdentity, [Fact.signerKind: "developerID", Fact.signerTeamID: "EQHXZ8M8AV", Fact.signatureValid: "true"]),
+    item(.gatekeeper, [Fact.notarized: "true"]),
+    item(.publisher, [Fact.publisherName: "Google LLC", Fact.publisherTrust: "normal"]),
+]
+
+@Suite struct IdentityAndGatekeeperScoreTests {
+    let engine = HardScoreEngine()
+
+    @Test func twoConfidentMatchesForOneNameIsAmberNotGreen() {
+        let candidates = [
+            SubjectCandidate(path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", pid: 10, strategy: "running_process_basename", confidence: .high),
+            SubjectCandidate(path: "/Users/me/Library/Caches/x/Google Chrome", pid: 20, strategy: "running_process_basename", confidence: .high),
+        ]
+        let result = engine.score(notarizedKnownPublisher, subject: subject, prompt: prompt, candidates: candidates)
+        #expect(result.score == .amber)
+        #expect(result.reasons.first?.code == "resolver.collision")
+        #expect(result.reasons.first?.params["n"] == "2")
+        #expect(!result.matchesOfficialSource)
+        #expect(!result.canSkipModel)
+    }
+
+    @Test func collisionSettledByTheSystemIsGreenAgain() {
+        let candidates = [
+            SubjectCandidate(path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", pid: 10, strategy: "running_process_basename", confidence: .high),
+            SubjectCandidate(path: "/Users/me/Library/Caches/x/Google Chrome", pid: 20, strategy: "running_process_basename", confidence: .high),
+        ]
+        let evidence = notarizedKnownPublisher + [item(.identity, [Fact.identityConfirmed: "true", Fact.identityPID: "10"])]
+        let result = engine.score(evidence, subject: subject, prompt: prompt, candidates: candidates)
+        #expect(result.score == .green)
+        #expect(!result.reasons.contains { $0.code == "resolver.collision" })
+    }
+
+    @Test func sameFileSeveralTimesIsNotACollision() {
+        let candidates = [
+            SubjectCandidate(path: "/Applications/Thing.app/Contents/MacOS/Thing", pid: 10, strategy: "running_process_basename", confidence: .high),
+            SubjectCandidate(path: "/Applications/Thing.app/Contents/MacOS/Thing", pid: 11, strategy: "running_process_basename", confidence: .high),
+            SubjectCandidate(path: "/Applications/Other.app", strategy: "installed_app", confidence: .low),
+        ]
+        let result = engine.score(notarizedKnownPublisher, subject: subject, prompt: prompt, candidates: candidates)
+        #expect(result.score == .green)
+    }
+
+    @Test func gatekeeperRejectionBlocksGreenFromACertificateAlone() {
+        let result = engine.score([
+            item(.signerIdentity, [Fact.signerKind: "developerID", Fact.signerTeamID: "EQHXZ8M8AV", Fact.signatureValid: "true"]),
+            item(.gatekeeper, [Fact.notarized: "false"], status: .warn),
+            item(.publisher, [Fact.publisherName: "Google LLC", Fact.publisherTrust: "normal"]),
+        ], subject: subject, prompt: prompt)
+        #expect(result.score == .amber)
+        #expect(result.reasons.first?.code == "gatekeeper.rejected")
+    }
+
+    @Test func gatekeeperRejectionOverridesUserTrustButNotAnOfficialMatch() {
+        let trusted = engine.score([
+            item(.signerIdentity, [Fact.signerKind: "developerID", Fact.signerTeamID: "ABC", Fact.signatureValid: "true"]),
+            item(.gatekeeper, [Fact.notarized: "false"], status: .warn),
+            item(.publisher, [Fact.publisherName: "Vendor", Fact.publisherTrust: "trusted"]),
+        ], subject: subject, prompt: prompt)
+        #expect(trusted.score == .amber)
+        #expect(!trusted.canSkipModel)
+
+        let official = engine.score([
+            item(.signerIdentity, [Fact.signerKind: "developerID", Fact.signerTeamID: "Q6L2SF6YDW", Fact.signatureValid: "true"]),
+            item(.gatekeeper, [Fact.notarized: "false"], status: .warn),
+            item(.officialManifest, [Fact.manifestMatch: "true", Fact.manifestSource: "downloads.claude.ai", Fact.publisherName: "Anthropic PBC"]),
+        ], subject: subject, prompt: prompt)
+        #expect(official.score == .green)
+        #expect(official.reasons.contains { $0.code == "gatekeeper.rejected" })
+    }
+
+    @Test func revokedCertificateIsHardRed() {
+        let result = engine.score(notarizedKnownPublisher + [item(.revocation, [Fact.signatureRevoked: "true"], status: .fail)], subject: subject, prompt: prompt)
+        #expect(result.score == .red)
+        #expect(result.reasons.first?.code == "signature.revoked")
+    }
+
+    @Test func runningCodeThatIsNotTheFileOnDiskIsHardRed() {
+        let mismatch = engine.score(notarizedKnownPublisher + [item(.runningCode, [Fact.runningValid: "true", Fact.runningMatchesDisk: "false"], status: .fail)], subject: subject, prompt: prompt)
+        #expect(mismatch.score == .red)
+        #expect(mismatch.reasons.first?.code == "running.mismatch")
+
+        let invalid = engine.score(notarizedKnownPublisher + [item(.runningCode, [Fact.runningValid: "false"], status: .fail)], subject: subject, prompt: prompt)
+        #expect(invalid.score == .red)
+        #expect(invalid.reasons.first?.code == "running.invalid")
+
+        let fine = engine.score(notarizedKnownPublisher + [item(.runningCode, [Fact.runningValid: "true", Fact.runningMatchesDisk: "true"])], subject: subject, prompt: prompt)
+        #expect(fine.score == .green)
+    }
+
+    @Test func newReasonsHaveSentencesInBothLanguages() {
+        for code in ["resolver.collision", "gatekeeper.rejected", "signature.revoked", "running.invalid", "running.mismatch"] {
+            for locale in ["en", "he"] {
+                let text = L10n.text("reason.\(code)", locale: locale, ["n": "2", "publisher": "X"])
+                #expect(text != "reason.\(code)", "missing \(locale) sentence for \(code)")
+            }
+        }
+    }
+}

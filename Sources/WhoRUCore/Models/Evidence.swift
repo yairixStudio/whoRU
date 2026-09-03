@@ -27,6 +27,13 @@ public struct EvidenceKey: RawRepresentable, Codable, Sendable, Hashable, Expres
     public static let history: EvidenceKey = "history"
     public static let impersonation: EvidenceKey = "impersonation"
     public static let publisher: EvidenceKey = "publisher"
+    /// Which program the system itself attributed the request to (tccd's log),
+    /// as opposed to the resolver's guess from the dialog's wording.
+    public static let identity: EvidenceKey = "identity"
+    /// Whether the code running in memory is valid and is the file that was checked on disk.
+    public static let runningCode: EvidenceKey = "running_code"
+    /// Whether the signing certificate has been revoked.
+    public static let revocation: EvidenceKey = "revocation"
 }
 
 public enum EvidenceStatus: String, Codable, Sendable, Hashable {
@@ -134,6 +141,17 @@ public enum Fact {
     public static let createdAt = "file.createdAt"
     public static let sandboxed = "entitlements.sandbox"
     public static let hardenedRuntime = "entitlements.hardenedRuntime"
+    /// `true` when the system's own record of the request names the scanned
+    /// program; `false` when it names a different one.
+    public static let identityConfirmed = "identity.confirmed"
+    /// Process id the system attributed the request to.
+    public static let identityPID = "identity.pid"
+    /// `true` | `false`: the running process passes dynamic code validation.
+    public static let runningValid = "running.valid"
+    /// `true` | `false`: the running process is the file that was checked on disk (same cdhash).
+    public static let runningMatchesDisk = "running.matchesDisk"
+    /// `true` when the signing certificate is revoked.
+    public static let signatureRevoked = "signature.revoked"
 }
 
 public enum SignerKind: String, Codable, Sendable {

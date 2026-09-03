@@ -12,7 +12,10 @@ public struct HardScoreEngine: Sendable {
         self.strictness = strictness
     }
 
-    public func score(_ evidence: [EvidenceItem], subject: Subject?, prompt: PermissionPrompt, history: HistorySummary? = nil) -> HardScoreResult {
+    /// `candidates` are every file the resolver matched to the dialog's name;
+    /// more than one confident match is a collision the score must reflect
+    /// until the system itself says which program asked (`identity.confirmed`).
+    public func score(_ evidence: [EvidenceItem], subject: Subject?, prompt: PermissionPrompt, history: HistorySummary? = nil, candidates: [SubjectCandidate] = []) -> HardScoreResult {
         let facts = Self.mergedFacts(evidence)
         func fact(_ key: String) -> String? { facts[key] }
 
@@ -20,6 +23,15 @@ public struct HardScoreEngine: Sendable {
         var red: [ScoreReason] = []
         if fact(Fact.signatureValid) == "false" {
             red.append(ScoreReason(code: "signature.broken", ref: .signatureIntegrity))
+        }
+        if fact(Fact.signatureRevoked) == "true" {
+            red.append(ScoreReason(code: "signature.revoked", ref: .revocation, params: ["publisher": fact(Fact.publisherName) ?? fact(Fact.signerName) ?? fact(Fact.signerTeamID) ?? ""]))
+        }
+        if fact(Fact.runningValid) == "false" {
+            red.append(ScoreReason(code: "running.invalid", ref: .runningCode))
+        }
+        if fact(Fact.runningMatchesDisk) == "false" {
+            red.append(ScoreReason(code: "running.mismatch", ref: .runningCode))
         }
         if fact(Fact.impersonation) == "true" {
             red.append(ScoreReason(code: "impersonation", ref: .impersonation, params: ["name": fact(Fact.impersonatedName) ?? prompt.requesterName]))
@@ -41,10 +53,23 @@ public struct HardScoreEngine: Sendable {
         // Amber concerns are collected even when the result is green, so the
         // model sees them and the headline can mention the first one.
         var concerns: [ScoreReason] = []
+        // Two confident matches for one name: the dialog could be about either.
+        // Only the system's own attribution of the request settles it.
+        let identityConfirmed = fact(Fact.identityConfirmed) == "true"
+        let distinctConfident = Set(candidates.filter { $0.confidence == .high }.map(\.path))
+        let collision = !identityConfirmed && distinctConfident.count > 1
         if subject == nil {
             concerns.append(ScoreReason(code: "unresolved"))
+        } else if collision {
+            concerns.append(ScoreReason(code: "resolver.collision", ref: .identity, params: ["n": String(distinctConfident.count)]))
         } else if fact(Fact.resolverConfidence) == Confidence.low.rawValue {
             concerns.append(ScoreReason(code: "resolver.low"))
+        }
+        // Gatekeeper refusing to run an app is the platform's own verdict on
+        // its signature, revocation included; a certificate alone cannot outrank it.
+        let gatekeeperRejected = fact(Fact.notarized) == "false"
+        if gatekeeperRejected {
+            concerns.append(ScoreReason(code: "gatekeeper.rejected", ref: .gatekeeper, params: ["publisher": publisherName]))
         }
         switch signerKind {
         case .unsigned: concerns.append(ScoreReason(code: "unsigned", ref: .signerIdentity))
@@ -107,6 +132,19 @@ public struct HardScoreEngine: Sendable {
         if strictness == .strict, !isSystem, !matchesOfficial, !isTrusted {
             if fact(Fact.downloadSource) == "unknown" { green.removeAll() }
             if prompt.service.isSensitive, fact(Fact.notarized) != "true", signerKind != .appStore { green.removeAll() }
+        }
+        // A Gatekeeper rejection leaves only the platform's own signature and a
+        // byte-for-byte match with the official release standing. A collision
+        // leaves nothing standing: the evidence may be about the wrong program.
+        if gatekeeperRejected {
+            green.removeAll { $0.code != "signed.apple" && $0.code != "manifest.match" }
+            isTrusted = false
+        }
+        if collision {
+            green.removeAll()
+            isSystem = false
+            isTrusted = false
+            matchesOfficial = false
         }
 
         if !green.isEmpty {
