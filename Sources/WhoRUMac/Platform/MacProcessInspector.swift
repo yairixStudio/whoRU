@@ -88,14 +88,24 @@ public struct MacApplicationFinder: ApplicationFinder {
             let candidate = "\(folder)/\(name).app"
             if FileManager.default.fileExists(atPath: candidate) { found.append(candidate) }
         }
-        if found.isEmpty {
-            // Spotlight, with the name passed inside the query string escaped for its grammar.
-            let escaped = name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
-            let query = "kMDItemDisplayName == '\(escaped)' && kMDItemContentType == 'com.apple.application-bundle'"
+        if found.isEmpty, Self.isSafeSpotlightName(name) {
+            // Spotlight. The name goes inside the query string, so only names that
+            // cannot change the query's meaning get this far.
+            let query = "kMDItemDisplayName == '\(name)' && kMDItemContentType == 'com.apple.application-bundle'"
             if let output = try? await Command.run("/usr/bin/mdfind", [query], timeout: .seconds(3)), output.succeeded {
                 found = output.stdout.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
             }
         }
         return found
+    }
+
+    /// Whether a dialog's display name may be interpolated into a Spotlight
+    /// query. `*` and `?` are wildcards even inside a quoted string (a dialog
+    /// named “*” would match every application), quotes and backslashes end or
+    /// escape the string, and control characters have no place in a name.
+    public static func isSafeSpotlightName(_ name: String) -> Bool {
+        guard !name.isEmpty else { return false }
+        let forbidden = Set("*?\"'\\".unicodeScalars)
+        return !name.unicodeScalars.contains { forbidden.contains($0) || CharacterSet.controlCharacters.contains($0) }
     }
 }
