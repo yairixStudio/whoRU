@@ -71,6 +71,39 @@ private func verdict(_ kind: VerdictKind, confidence: Int = 90, recommendation: 
         #expect(v.recommendation == .investigate)
         #expect(validator.validate(verdict(.malicious, recommendation: .allow), against: hard, evidenceKeys: keys) == .rejected(reason: "the model called the subject malicious but recommended allowing it"))
     }
+
+    @Test func amberNeverRecommendsAllow() {
+        let hard = HardScoreResult(score: .amber, reasons: [ScoreReason(code: "unsigned")])
+        guard case .accepted(let v) = validator.validate(verdict(.legitimate, confidence: 90, recommendation: .allow), against: hard, evidenceKeys: keys) else {
+            Issue.record("expected acceptance"); return
+        }
+        #expect(v.verdict == .probablyLegitimate)
+        #expect(v.confidence == 75)
+        #expect(v.recommendation == .investigate)
+        guard case .accepted(let suspicious) = validator.validate(verdict(.suspicious, recommendation: .allow), against: hard, evidenceKeys: keys) else {
+            Issue.record("expected acceptance"); return
+        }
+        #expect(suspicious.recommendation == .investigate)
+        guard case .accepted(let denied) = validator.validate(verdict(.suspicious, recommendation: .deny), against: hard, evidenceKeys: keys) else {
+            Issue.record("expected acceptance"); return
+        }
+        #expect(denied.recommendation == .deny)
+    }
+
+    @Test func unknownVerdictNeverRecommendsAllow() {
+        for score in [HardScore.green, .amber] {
+            let hard = HardScoreResult(score: score, reasons: [])
+            guard case .accepted(let v) = validator.validate(verdict(.unknown, recommendation: .allow), against: hard, evidenceKeys: keys) else {
+                Issue.record("expected acceptance"); return
+            }
+            #expect(v.recommendation == .investigate)
+        }
+        let green = HardScoreResult(score: .green, reasons: [])
+        guard case .accepted(let v) = validator.validate(verdict(.legitimate, recommendation: .allow), against: green, evidenceKeys: keys) else {
+            Issue.record("expected acceptance"); return
+        }
+        #expect(v.recommendation == .allow)
+    }
 }
 
 @Suite struct PartialJSONTests {

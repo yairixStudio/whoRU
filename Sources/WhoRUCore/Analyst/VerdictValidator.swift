@@ -7,7 +7,7 @@ public enum VerdictValidation: Sendable, Hashable {
 }
 
 /// Enforces in code what the prompt asks for: red stays red, amber caps at
-/// “probably legitimate”, evidence references must exist.
+/// “probably legitimate” and never says “allow”, evidence references must exist.
 public struct VerdictValidator: Sendable {
     public init() {}
 
@@ -31,6 +31,11 @@ public struct VerdictValidator: Sendable {
             if verdict.verdict == .probablyLegitimate {
                 verdict.confidence = min(verdict.confidence, 75)
             }
+            // “Probably fine · allow” reads as a green light for something the
+            // rules could not clear (an unsigned binary, say). Amber advises a look.
+            if verdict.recommendation == .allow {
+                verdict.recommendation = .investigate
+            }
         case .green:
             break
         }
@@ -41,6 +46,10 @@ public struct VerdictValidator: Sendable {
         }
         if verdict.verdict == .malicious, verdict.recommendation == .allow {
             return .rejected(reason: "the model called the subject malicious but recommended allowing it")
+        }
+        // Not knowing what something is cannot be a reason to allow it.
+        if verdict.verdict == .unknown, verdict.recommendation == .allow {
+            verdict.recommendation = .investigate
         }
 
         // Evidence citations must point at real evidence; otherwise they are inferences.
