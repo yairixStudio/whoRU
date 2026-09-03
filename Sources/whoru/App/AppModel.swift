@@ -356,7 +356,11 @@ final class AppModel {
             // program. Re-score with the unconfirmed identity so the panel and
             // the badge say so instead of vouching for the dialog.
             let updated = IdentityConfirmation.applyUnconfirmed(to: record, strictness: strictness, locale: locale, history: history)
-            if updated != record { session.adopt(confirmed: updated); try? await store.save(updated) }
+            if updated != record {
+                session.adopt(confirmed: updated)
+                try? await store.save(updated)
+                AppLog.shared.warn("identity", "identity not confirmed: “\(session.prompt.requesterName)” \(session.prompt.service.shortName) · score \(updated.hardScore?.score.rawValue ?? "?")\(updated.verdictRejected == IdentityConfirmation.verdictDroppedReason ? " · verdict withdrawn" : "")")
+            }
             if session.identity == .pending { session.identity = .unconfirmed }
             return .unconfirmed
         }
