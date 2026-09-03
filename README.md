@@ -4,7 +4,7 @@
 
 Every few days macOS shows a dialog like *“2.1.258” would like to access files on a network volume.* The name in the dialog is often meaningless, and the dialog gives you no way to find out who is asking, why, or whether it is safe. So people click Allow out of habit, or Don’t Allow out of fear.
 
-whoRU is a small menu-bar app for macOS. When a permission dialog appears, whoRU shows up next to it and answers three questions in a few seconds:
+whoRU is a small menu-bar app for macOS. When a permission dialog appears, whoRU shows up next to it and answers three questions in a few seconds, after settling a fourth one first: whether the dialog is real at all.
 
 1. **Who is this, really?** It finds the actual program behind the name, reads the system’s own record of which process asked, shows its real icon and publisher, and verifies the code signature on disk and in memory.
 2. **Is it what it claims to be?** It compares the file’s hash against the publisher’s official release, checks where it was downloaded from, where it lives on disk, and who launched it.
