@@ -99,7 +99,20 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install
 
-Signed and notarized builds of 0.2.0 are on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install), with their SHA-256 checksums. Building from source takes a minute and needs macOS 26 or later with Xcode 26 or later:
+Signed and notarized builds of 0.2.0 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install). Take `whoRU-0.2.0.pkg` to install it, or `whoRU-0.2.0.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
+
+Both are signed with an Apple Developer ID and notarized by Apple, so they open without a Gatekeeper warning. A tool that asks you to check what you are about to run should be checkable itself, and every release publishes what you need to do it:
+
+```sh
+shasum -a 256 -c SHA256SUMS.txt          # → whoRU-0.2.0.pkg: OK
+pkgutil --check-signature whoRU-0.2.0.pkg
+#   Notarization: trusted by the Apple notary service
+#   1. Developer ID Installer: yair amsalem (A3W935G59T)
+spctl --assess --type install -vv whoRU-0.2.0.pkg
+#   source=Notarized Developer ID
+```
+
+Building from source takes a minute and needs macOS 26 or later with Xcode 26 or later:
 
 ```sh
 git clone https://github.com/yairixStudio/whoRU.git
@@ -108,11 +121,12 @@ scripts/build-app.sh          # → build/whoRU.app with the CLI inside (signed 
 open build/whoRU.app
 scripts/make-pkg.sh           # → build/whoRU-<version>.pkg: the one file for a download page
 scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applications
+scripts/make-release.sh 0.2.0 # → build/whoRU-0.2.0-release/: both files and their checksums
 ```
 
 The package installs the app into Applications, links `whoru` into `/usr/local/bin`, quits an older copy first and opens the new one when it is done, so the setup assistant appears right away. It refuses to run on anything older than macOS 26.
 
-For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile named `whoru-notary` (from an App Store Connect API key or an app-specific password; `scripts/notarize.sh` has both commands). Issue the certificates from the signing requests in `.signing/` (gitignored) and run `scripts/import-developer-id.sh` to put them in the Keychain under whoRU's name. From then on the scripts pick everything up from the Keychain by themselves, notarize, staple, and say what is still missing at the end.
+For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile named `whoru-notary` (from an App Store Connect API key or an app-specific password; `scripts/notarize.sh` has both commands). Issue the certificates from the signing requests in `.signing/` (gitignored) and run `scripts/import-developer-id.sh` to put them in the Keychain under whoRU's name. From then on the scripts pick everything up from the Keychain by themselves, notarize, staple, and say what is still missing at the end. `scripts/make-release.sh` is the whole sequence in one command: it stamps one version across all three scripts, checks that Gatekeeper accepts what came out, and refuses to write the release folder if anything is unsigned or unstapled. Its checksums are taken last, after Apple's ticket is stapled into the files, because stapling rewrites them.
 
 First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out (Anthropic’s Developer ID with the hardened runtime), an API key, or none. The engine never receives that permission: it runs as a separate process with none of whoRU’s grants.
 
