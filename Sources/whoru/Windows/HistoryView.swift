@@ -224,13 +224,39 @@ struct HistoryDetail: View {
     }
 
     /// What the AI can do for this record now, not what it did when the record
-    /// was made: with the agent off there is no conversation, only a note; with
-    /// an agent that can continue the conversation on file, the chat; otherwise
-    /// a button that sends the scan to the current agent.
+    /// was made: the conversation whenever an agent can answer about this scan,
+    /// a button while no verdict has come from one, and a note when there is no
+    /// agent to ask at all.
     @ViewBuilder
     private var aiSection: some View {
-        if model.settings.engine == .none {
-            if !session.messages.isEmpty { conversation(readOnly: true) }
+        let agent = model.onDemandAgents.first { $0 != .none }
+        if model.canChat(session) {
+            conversation(readOnly: false)
+        } else if !session.messages.isEmpty {
+            conversation(readOnly: true)
+        }
+        if let agent, session.canAskAI {
+            GroupBox {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles").foregroundStyle(.tint)
+                    if session.analysis == .thinking {
+                        ProgressView().controlSize(.small)
+                        Text(session.toolActivity ?? "AI is reading the evidence…").foregroundStyle(.secondary)
+                    } else if let engine = record.analystSession?.engine {
+                        Text("This conversation was with \(model.describe(engine)). Your agent is now \(model.engineDescription); asking starts a new one.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    } else {
+                        Text("This scan was not sent to the AI.").font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if session.analysis != .thinking {
+                        Button("Ask \(agent.displayName)") { model.askAI(session) }
+                            .help("Sends the evidence to \(model.describe(agent)). File contents never leave this Mac.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if agent == nil {
             GroupBox {
                 HStack(spacing: 10) {
                     Image(systemName: "sparkles").foregroundStyle(.secondary)
@@ -240,32 +266,6 @@ struct HistoryDetail: View {
                     Button("Settings…") { AppDelegate.shared?.showSettings() }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else if session.canContinueConversation(with: model.currentAnalystID) {
-            conversation(readOnly: false)
-        } else {
-            if !session.messages.isEmpty { conversation(readOnly: true) }
-            if session.canAskAI, let agent = model.onDemandAgents.first {
-                GroupBox {
-                    HStack(spacing: 10) {
-                        Image(systemName: "sparkles").foregroundStyle(.tint)
-                        if session.analysis == .thinking {
-                            ProgressView().controlSize(.small)
-                            Text(session.toolActivity ?? "AI is reading the evidence…").foregroundStyle(.secondary)
-                        } else if let engine = record.analystSession?.engine {
-                            Text("This conversation was with \(model.describe(engine)). Your agent is now \(model.engineDescription); asking starts a new one.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        } else {
-                            Text("This scan was not sent to the AI.").font(.callout).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if session.analysis != .thinking {
-                            Button("Ask \(agent.displayName)") { model.askAI(session) }
-                                .help("Sends the evidence to \(model.describe(agent)). File contents never leave this Mac.")
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
         }
     }

@@ -315,12 +315,20 @@ struct CompanionView: View {
                     labeled("What it is", verdict.whatItIs)
                     labeled("Why it asks", verdict.whyItAsks)
                     labeled("If you deny", verdict.ifDenied)
-                    if !verdict.suggestedQuestions.isEmpty, session.record?.analystSession != nil {
+                    // Gated on the same thing as the question field: a chip
+                    // the panel cannot answer must not be offered.
+                    if !verdict.suggestedQuestions.isEmpty, model.canChat(session) {
                         FlowLayout(spacing: 6) {
                             ForEach(verdict.suggestedQuestions, id: \.self) { question in
-                                Button(question) { model.send(question, in: session) }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                                Button { model.send(question, in: session) } label: {
+                                    // Wraps rather than running past the panel's
+                                    // edge, where the rounded clip would swallow
+                                    // both the text and the click.
+                                    Text(question).multilineTextAlignment(.leading)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(session.isReplying)
                             }
                         }
                         .padding(.vertical, 2)
@@ -414,16 +422,22 @@ struct CompanionView: View {
 
     // MARK: AI
 
-    /// The AI slot: a conversation when the AI has spoken and can continue,
-    /// else a button that sends this one scan to an agent, whether the AI is
-    /// off, set to ask only on request, skipped for a trusted publisher, or
-    /// failed. Nothing is sent until the user presses it.
+    /// The AI slot: whatever has been said so far, a button that sends this
+    /// one scan to an agent while no verdict has come from one, and the
+    /// question field, which stays put so a question is always one line away.
+    /// Nothing is sent until the user presses or asks.
     @ViewBuilder
     private var aiSection: some View {
-        if model.canChat(session) {
-            chatSection
-        } else if session.canAskAI, !model.onDemandAgents.isEmpty {
+        // Drawn whenever there is a conversation, whichever agent produced it:
+        // an answer must never arrive to a panel that shows no sign of it.
+        if !session.messages.isEmpty || session.isReplying {
+            conversation
+        }
+        if session.canAskAI, !model.onDemandAgents.isEmpty {
             askAIButton
+        }
+        if model.canChat(session) {
+            composer
         }
     }
 
@@ -467,7 +481,7 @@ struct CompanionView: View {
 
     // MARK: Chat
 
-    private var chatSection: some View {
+    private var conversation: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(session.messages) { message in
                 VStack(alignment: .leading, spacing: 1) {
@@ -493,19 +507,34 @@ struct CompanionView: View {
                     }
                 }
             }
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles").foregroundStyle(.tint).font(.callout)
-                TextField("Ask about this request…", text: $session.draft)
-                    .textFieldStyle(.plain)
-                    .focused($questionFocused)
-                    .onSubmit { model.send(session.draft, in: session) }
-                    .disabled(session.isReplying)
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(.quaternary.opacity(0.6), in: Capsule())
-            .overlay(Capsule().stroke(.separator.opacity(0.6), lineWidth: 0.5))
         }
+    }
+
+    /// Always here while an agent can answer, whether or not it has spoken
+    /// yet: the field is the way to ask anything, not only a way to follow up.
+    /// It stays typeable while an answer is on its way; the send arrow waits.
+    private var composer: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles").foregroundStyle(.tint).font(.callout)
+            TextField("Ask about this request…", text: $session.draft)
+                .textFieldStyle(.plain)
+                .focused($questionFocused)
+                .onSubmit { model.send(session.draft, in: session) }
+            if session.isReplying {
+                ProgressView().controlSize(.mini)
+            } else if !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button { model.send(session.draft, in: session) } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.callout).foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Send")
+            }
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(.quaternary.opacity(0.6), in: Capsule())
+        .overlay(Capsule().stroke(.separator.opacity(0.6), lineWidth: 0.5))
+        .help(model.chatAgentName(for: session).map { "Answered by \($0). File contents never leave this Mac." } ?? "")
     }
 
     // MARK: Decision
@@ -641,15 +670,23 @@ struct RawOutputSheet: View {
     }
 }
 
-/// Wraps its children onto as many lines as needed.
+/// Wraps its children onto as many lines as needed. Nothing is ever wider
+/// than the row: a child that does not fit is offered the full width and
+/// wraps inside itself, so it cannot spill past the panel's edge.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+
+    private func size(of view: LayoutSubview, within width: CGFloat) -> CGSize {
+        let ideal = view.sizeThatFits(.unspecified)
+        guard ideal.width > width else { return ideal }
+        return view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? 300
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = size(of: view, within: width)
             if x + size.width > width, x > 0 { x = 0; y += rowHeight + spacing; rowHeight = 0 }
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
@@ -660,7 +697,7 @@ struct FlowLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = size(of: view, within: bounds.width)
             if x + size.width > bounds.maxX, x > bounds.minX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
             view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing

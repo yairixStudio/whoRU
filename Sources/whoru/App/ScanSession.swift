@@ -144,12 +144,6 @@ final class ScanSession: Identifiable {
     /// The scan is scored, stored, and the AI has not spoken about it yet.
     var canAskAI: Bool { record != nil && hardScore != nil && verdict == nil && analysis != .thinking && !isReplying }
 
-    /// The conversation on file can be continued by the analyst with this id.
-    func canContinueConversation(with analystID: String?) -> Bool {
-        guard let analystID, let session = record?.analystSession else { return false }
-        return session.engine == analystID
-    }
-
     /// Headline shown in the glance layer: the model's if accepted, else the deterministic one.
     var displayedHeadline: Headline? {
         if let verdict {

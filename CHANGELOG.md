@@ -4,6 +4,27 @@ All notable changes to whoRU. Dates are the release date; versions follow
 [semantic versioning](https://semver.org), and while the major version is 0 a
 minor bump may change behaviour.
 
+## Unreleased
+
+### Fixed
+
+- The panel kept a conversation to itself. A scan whose verdict came from the
+  cache, made by an agent other than the one currently chosen, showed neither
+  the question field nor any answer: questions asked from the suggested chips
+  were sent, and answered, into a panel that drew nothing. The question field
+  and the chips now appear whenever a question can be answered, and a
+  conversation is shown whichever agent produced it.
+- The question field stays on screen instead of appearing only after the AI has
+  spoken. A question asked about a scan the agent has not read yet has it read
+  the evidence first, then answers.
+- A suggested question longer than the panel is wide now wraps instead of
+  running past the edge, where the rounded clip swallowed both the text and
+  the click.
+- The setup assistant's *Try it now* step keeps its button. It used to turn into
+  *Continue* after one press, so the assistant could raise a demo dialog only
+  once; the permission is reset before each try, so it can be run as often as
+  you like. A closed assistant also starts from the top when it is opened again.
+
 ## 0.2.0 — 2026-09-03
 
 A security release. An outside review of 0.1.0 found two structural problems and

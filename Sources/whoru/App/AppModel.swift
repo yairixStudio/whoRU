@@ -401,34 +401,55 @@ final class AppModel {
     /// trusted, or the last attempt failed. `engine` picks the agent for this
     /// one scan when the setting is None.
     func askAI(_ session: ScanSession, engine: EngineChoice? = nil) {
-        guard let record = session.record, session.canAskAI else { return }
+        guard session.canAskAI else { return }
         let choice = engine ?? onDemandAgents.first
         guard let choice, choice != .none else { return }
+        Task { await analyze(session, engine: choice) }
+    }
+
+    /// The model call itself. Awaited by `send` when a question arrives before
+    /// the agent has read the evidence, so the question is answered in context.
+    private func analyze(_ session: ScanSession, engine: EngineChoice) async {
+        guard let record = session.record else { return }
         session.analysis = .thinking
         session.toolActivity = nil
-        AppLog.shared.info("app", "AI asked by hand for “\(session.prompt.requesterName)” via \(choice.rawValue)")
-        Task {
-            let env = await environment(engine: choice)
-            let pipeline = ScanPipeline(environment: env)
-            let updated = await pipeline.analyze(record: record) { event in
-                Task { @MainActor in session.apply(event) }
-            }
-            let live = updated.filled(from: session.record ?? updated)
-            session.record = live
-            if live != updated { try? await store.save(live) }
-            if session.analysis == .thinking { session.analysis = .idle }
-            monthlySpend = (try? await store.monthlySpend()) ?? 0
+        AppLog.shared.info("app", "AI asked by hand for “\(session.prompt.requesterName)” via \(engine.rawValue)")
+        let env = await environment(engine: engine)
+        let pipeline = ScanPipeline(environment: env)
+        let updated = await pipeline.analyze(record: record) { event in
+            Task { @MainActor in session.apply(event) }
         }
+        let live = updated.filled(from: session.record ?? updated)
+        session.record = live
+        if live != updated { try? await store.save(live) }
+        if session.analysis == .thinking { session.analysis = .idle }
+        monthlySpend = (try? await store.monthlySpend()) ?? 0
     }
 
     func send(_ question: String, in session: ScanSession) {
         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !session.isReplying, let record = session.record else { return }
+        guard !text.isEmpty, !session.isReplying, session.record != nil else { return }
         session.draft = ""
         session.isReplying = true
         session.streamingReply = ""
         session.messages.append(ChatMessage(role: .user, text: text))
         Task {
+            // A question can be the first thing asked about a scan. There is
+            // nothing to continue then, so the agent reads the evidence first
+            // and the question is the next turn of that same conversation.
+            if session.record?.analystSession == nil, let engine = onDemandAgents.first, engine != .none {
+                await analyze(session, engine: engine)
+            }
+            guard let record = session.record, record.analystSession != nil else {
+                let why: String = switch session.analysis {
+                case .skipped(let reason): "the AI was not asked: \(reason)"
+                case .failed(let reason): "the AI could not be reached: \(reason)"
+                default: "no AI agent is available — choose one in Settings → AI"
+                }
+                session.messages.append(ChatMessage(role: .assistant, text: "I could not answer that: \(why)."))
+                session.isReplying = false
+                return
+            }
             let env = await environment(for: session)
             let pipeline = ScanPipeline(environment: env)
             do {
@@ -490,13 +511,21 @@ final class AppModel {
         }
     }
 
-    /// Whether the panel can keep talking to the AI about this scan: the
-    /// automatic agent made the verdict, or the user picked an agent for it.
+    /// Whether a question about this scan can be answered, which is what puts
+    /// the question field and the suggested questions on screen. A conversation
+    /// on file is continued by the agent that started it, whatever the current
+    /// setting is — `environment(for:)` switches back to it — and a scan nobody
+    /// has asked about yet can be opened by any agent available now.
     func canChat(_ session: ScanSession) -> Bool {
-        guard let engineID = session.record?.analystSession?.engine else { return false }
-        if engineID == currentAnalystID { return true }
-        guard settings.engine == .none, let engine = EngineChoice(analystID: engineID) else { return false }
-        return onDemandAgents.contains(engine)
+        guard session.record != nil else { return false }
+        if session.record?.analystSession != nil { return true }
+        return session.hardScore != nil && onDemandAgents.contains { $0 != .none }
+    }
+
+    /// The agent a question would go to, named for the field's tooltip.
+    func chatAgentName(for session: ScanSession) -> String? {
+        if let id = session.record?.analystSession?.engine { return describe(id) }
+        return onDemandAgents.first { $0 != .none }.map(describe)
     }
 
     func dismiss(_ session: ScanSession) {
