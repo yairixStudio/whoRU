@@ -162,12 +162,15 @@ struct CLI {
 
     #if os(macOS)
     /// The app's settings, checked against the app's signature when the key
-    /// can be read. The key is never created here: the tool is signed
-    /// differently from the app, so the Keychain may ask or refuse, and a
-    /// terminal command must not depend on that. Without the key the file is
-    /// used unverified.
+    /// is given in WHORU_STORE_INTEGRITY_KEY. The Keychain is never consulted
+    /// here: the tool is signed differently from the app, so reading the
+    /// app's item would put a Keychain dialog on screen and block the
+    /// command. Without the key the file is used unverified.
     static func loadSettings(paths: DefaultPaths) -> Settings {
-        let key = IntegrityKey.load(from: MacEnvironment.secrets(), createIfMissing: false)
+        // Only the environment: reading the app's Keychain item from a
+        // differently signed binary puts a Keychain dialog on screen and
+        // blocks the command until it is answered.
+        let key = IntegrityKey.load(from: EnvironmentSecretStore(), createIfMissing: false)
         let store = JSONFileSettingsStore(paths: paths, integrity: FileIntegrity(key: key))
         guard let loaded = try? store.loadChecked() else { return Settings() }
         if loaded.state == .tampered {
