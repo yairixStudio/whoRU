@@ -6,11 +6,15 @@ Every few days macOS shows a dialog like *“2.1.258” would like to access fil
 
 whoRU is a small menu-bar app for macOS. When a permission dialog appears, whoRU shows up next to it and answers three questions in a few seconds:
 
-1. **Who is this, really?** It finds the actual program behind the name, shows its real icon and publisher, and verifies the code signature.
+1. **Who is this, really?** It finds the actual program behind the name, reads the system’s own record of which process asked, shows its real icon and publisher, and verifies the code signature on disk and in memory.
 2. **Is it what it claims to be?** It compares the file’s hash against the publisher’s official release, checks where it was downloaded from, where it lives on disk, and who launched it.
 3. **Does the request make sense?** Optionally, an AI model reads the evidence and explains it in plain language: what the program is, why it probably needs this permission, and what breaks if you say no. You can keep asking questions.
 
-whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yours.
+It also answers a question few people think to ask: is this a real macOS dialog at all? A window that only looks like one gets a red *Not a system dialog* panel naming the program that drew it and who signed that program.
+
+A green verdict is about identity, not behaviour. It says the file is what its signature and the system say it is. A signed and notarized program can still be malicious, or compromised upstream. *Safe to allow* appears only when the file is byte-for-byte the publisher’s official release, and whoRU can check that today for one product, Claude Code. Everything else tops out at *Probably fine*.
+
+whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yours. The programs it runs on your behalf, the AI engines, cannot click either: they hold none of whoRU’s permissions.
 
 <img src="docs/images/live-downloads-prompt.png" width="600" alt="A real macOS permission dialog for whoRU itself, with the whoRU companion panel beside it showing the verdict and evidence rows">
 
@@ -22,17 +26,21 @@ whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yo
 Early, working, unreleased. Built in the open from the [design document](docs/DESIGN.md).
 
 - [x] Core models, dialog text parser with fixtures, hard-evidence scoring, deterministic headline
-- [x] macOS evidence checks: signature identity and integrity, Gatekeeper and notarization, SHA-256, official release manifest, download origin, install location, launch chain, persistence, Info.plist declarations, entitlements, timestamps, network connections, optional VirusTotal
+- [x] macOS evidence checks: signature identity and integrity, certificate revocation, Gatekeeper and notarization, SHA-256, official release manifest, download origin, install location, launch chain, persistence, Info.plist declarations, entitlements, timestamps, network connections, optional VirusTotal
 - [x] Requester resolver (dialog name → file on disk, with collision handling)
+- [x] Identity confirmation from the system’s own record of the request, with validation of the running process and a rescan when the system names another program
+- [x] Fake-dialog detection: a permission prompt drawn by anything but a macOS dialog process is flagged red and never scanned
 - [x] Command-line scanner (`whoru-cli`)
-- [x] AI analysts: Claude API (streaming, structured output, bounded tools), Claude Code headless, local Ollama-style model; verdict validator that enforces the evidence contract in code
-- [x] Dialog watcher (window list + Accessibility, independent of which system process draws the dialog) and the companion panel (Liquid Glass, non-activating, follows the dialog)
-- [x] Onboarding, settings, history, verdict cache, publisher trust list
+- [x] AI analysts: Claude API (streaming, structured output, bounded tools), Claude Code headless, Codex CLI, Gemini CLI, Apple Intelligence, local Ollama-style model; verdict validator that enforces the evidence contract in code
+- [x] AI engines run as their own responsible process with none of whoRU’s permissions; Claude Code is verified before use and limited to `whoru-inspect`
+- [x] Dialog watcher (window list + Accessibility, independent of which system process draws the dialog) and the companion panel (Liquid Glass, non-activating, follows the dialog, can be pinned)
+- [x] Onboarding, settings, history, verdict cache, publisher trust list; settings and trust list are tamper-evident
 - [x] App bundle script, signing, CI
+- [x] Installer package, Developer ID signing and notarization (`scripts/make-pkg.sh`)
 - [x] First live run: a real Downloads-folder prompt on a macOS 27 beta was read in 22 ms and the panel appeared beside it
 - [ ] Live validation against every TCC dialog type and more Macs (needs testers: see [issues](https://github.com/yairixStudio/whoRU/issues))
 - [ ] Hebrew and other dialog fixtures
-- [ ] Developer ID signing, notarization, Sparkle updates, Homebrew cask
+- [ ] Sparkle updates, Homebrew cask
 - [ ] Full Disk Access path that fills the user’s decision in automatically
 
 What a scan of the Claude Code binary looks like from the terminal today, without AI (0.3 s) and then with the Claude Code engine:
@@ -56,14 +64,18 @@ What a scan of the Claude Code binary looks like from the terminal today, withou
 
 ```
 permission dialog ──▶ Watcher ──▶ Resolver ──▶ Collector ──▶ HardScore ──▶ (AI Analyst) ──▶ Companion panel
-                                                                                          └──▶ History
+                         │                                       ▲                           └──▶ History
+                         └──▶ Identity (the system’s own record) ┘
 ```
 
-- **Watcher** notices a new permission dialog through the Accessibility API and reads its text and position.
-- **Resolver** turns the display name in the dialog into a file on disk, a process, and a bundle identifier, with a confidence level.
+- **Watcher** notices a new permission dialog through the window list and the Accessibility API, reads its text and position, and checks who drew it. Only a window owned by one of macOS’s own dialog processes, signed by Apple as part of the platform, counts as a permission dialog. Any other window whose text reads like a permission prompt gets a red *Not a system dialog* panel naming the process that drew it and its signer, and is never scanned.
+- **Resolver** turns the display name in the dialog into a file on disk, a process, and a bundle identifier, with a confidence level. Two programs with the same name are an amber collision until the system says which one asked; the panel lists the others under *Also matches*.
+- **Identity** does not trust the dialog’s wording. Alongside the checks, whoRU reads the system’s own record of the request: `tccd` writes an attribution line to the unified log that names the responsible process with its pid and path. That record confirms the resolver’s answer, corrects it (the scan is redone for the program the system named), or is missing, in which case the panel says *not confirmed*. The record is best effort: on the current macOS 27 beta, `tccd` often writes nothing for a prompted request, so *not confirmed* is common there and the resolver's answer stands on its own evidence. Once confirmed, the running process itself is validated: its dynamic code signature, and its code directory hash against the file on disk. A mismatch is red, and a verdict formed before that evidence arrived is withdrawn.
 - **Collector** runs independent evidence checks in parallel. Each one is a deterministic command or system API whose raw output you can inspect.
-- **HardScore** turns the evidence into a red / amber / green floor and ceiling. A broken signature is red, no matter what anyone says afterwards. A one-sentence headline is on screen in about a second, before any model runs.
-- **AI Analyst** (optional) receives the evidence bundle and returns a structured verdict. It can lower confidence and raise suspicion. It cannot turn a red into a green; the app enforces that in code, not in the prompt. Agents: Claude Code, Codex CLI, Gemini CLI, or Apple Intelligence (Apple's on-device model, nothing leaves the Mac); whoRU offers whatever is usable on your Mac and you pick the agent and the model in Settings → AI. The Claude API and Ollama-style local models remain available from the command line.
+- **HardScore** turns the evidence into a red / amber / green floor and ceiling. A broken signature, a certificate Apple revoked, a process that is not the file on disk, or a fake dialog is red, no matter what anyone says afterwards. When Gatekeeper rejects a program, only Apple’s own signature or an official-release match can still make it green. A one-sentence headline is on screen in about a second, before any model runs.
+- **AI Analyst** (optional) receives the evidence bundle and returns a structured verdict. It can lower confidence and raise suspicion. It cannot turn a red into a green, and it can never recommend *allow* on an amber score or with an *unknown* verdict; the app enforces that in code, not in the prompt. Everything the program wrote about itself (the name in the dialog, display name, bundle identifier, version, usage descriptions) reaches the model in one `claims` object marked as hostile, and nowhere else. Agents: Claude Code, Codex CLI, Gemini CLI, or Apple Intelligence (Apple's on-device model, nothing leaves the Mac); whoRU offers whatever is usable on your Mac and you pick the agent and the model in Settings → AI. The Claude API and Ollama-style local models remain available from the command line.
+- **Engines hold none of whoRU’s permissions.** Each engine is spawned as its own responsible process (macOS “disclaim responsibility”), so it inherits nothing from whoRU, Accessibility included. Claude Code is verified every time whoRU sets it up (Anthropic’s Developer ID, hardened runtime) and runs with no user settings, hooks, MCP servers or slash commands. Its only command is `whoru-inspect`, a small tool inside the app that inspects the program under review and nothing else: `signature`, `gatekeeper`, `libraries`, `headers`, `plist`, `attributes`, `process`, `network`, `files`, `help`. Codex and Gemini are scripts and cannot be signature-verified; they get no commands and answer from the evidence bundle alone.
+- **Tamper-evident settings.** `settings.json` and the publisher trust list carry an HMAC-SHA256 sidecar signed with a key kept in the Keychain. A file changed outside whoRU is ignored and a banner in Settings says so. This is tamper evidence, not confidentiality: the files stay plain JSON, and a file from an older version is trusted once and then signed.
 
 <img src="docs/images/settings-ai.png" width="480" alt="whoRU settings, AI tab: engine picker, installed tools, API key, analysis depth, monthly budget">
 
@@ -76,12 +88,13 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Principles
 
-- **Evidence before opinions.** Every line is marked as either evidence (from a deterministic check) or inference (from the model). The two never mix visually.
-- **The model is bound by the evidence.** Hard evidence sets the floor and the ceiling.
-- **Never clicks on your behalf.** Not even as an option.
-- **Private by default.** Names, paths (with your username removed), signatures, hashes and metadata may leave the machine. File contents never do. That is a hard limit, not a setting.
+- **Evidence before opinions.** Every line is marked as either evidence (from a deterministic check) or inference (from the model). The two never mix visually. The system’s own record of who asked outranks the dialog’s wording, and what a program says about itself is a claim, never evidence.
+- **The model is bound by the evidence.** Hard evidence sets the floor and the ceiling. Red stays red; amber never comes with *allow*.
+- **Green means identity, not behaviour.** A green verdict says the program is what it claims to be. It does not say what the program will do.
+- **Never clicks on your behalf.** Not even as an option. The AI engines it runs cannot either: they hold none of its permissions.
+- **Private by default.** Names, paths (with your username removed), signatures, hashes and metadata may leave the machine. File contents never do. That is a hard limit, not a setting. The tool that reports a program’s open files returns folders and a count, never file names.
 - **Works without AI.** No network or no API key still gives you the hard evidence and a deterministic verdict.
-- **Transparent.** “What was sent?” shows the exact JSON. Every evidence row opens the command and its raw output.
+- **Transparent.** “What was sent?” shows the exact JSON, followed by every tool the model called and what came back. Every evidence row opens the command and its raw output.
 - **Built from the system’s own parts.** System materials, system fonts, system symbols, system controls. Nothing to learn.
 
 ## Install
@@ -101,7 +114,7 @@ The package installs the app into Applications, links `whoru` into `/usr/local/b
 
 For a build that opens on other Macs without a Gatekeeper warning you need an Apple Developer Program membership: a *Developer ID Application* certificate (the app), a *Developer ID Installer* certificate (the package) and a notarytool keychain profile named `whoru-notary` (from an App Store Connect API key or an app-specific password; `scripts/notarize.sh` has both commands). Issue the certificates from the signing requests in `.signing/` (gitignored) and run `scripts/import-developer-id.sh` to put them in the Keychain under whoRU's name. From then on the scripts pick everything up from the Keychain by themselves, notarize, staple, and say what is still missing at the end.
 
-First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out, an API key, or none.
+First launch walks you through the one permission whoRU needs (Accessibility, used only to read the text of permission dialogs) and the optional AI engine: Claude Code if it is installed and its signature checks out (Anthropic’s Developer ID with the hardened runtime), an API key, or none. The engine never receives that permission: it runs as a separate process with none of whoRU’s grants.
 
 An ad-hoc signed build loses its Accessibility permission when you rebuild; re-grant it in System Settings → Privacy & Security → Accessibility. Developer ID builds will not have this problem.
 

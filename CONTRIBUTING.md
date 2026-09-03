@@ -24,7 +24,8 @@ These are the rules, not preferences. They exist because whoRU asks for a powerf
 - **Changes that let the model override hard evidence.** A red hard score stays red. The validator that enforces this is not optional.
 - **Code that modifies the system.** No hooks, no code injection, no SIP changes, no kernel or system extensions.
 - **New third-party dependencies** without a discussion first. The app currently has none, on purpose.
-- **A free shell for the model.** Tools the model can call are a closed list, implemented in code, with validated inputs.
+- **A free shell for the model.** Tools the model can call are a closed list, implemented in code, with validated inputs. An engine that brings its own shell (Claude Code) gets exactly one command, `whoru-inspect`, which takes a subcommand and nothing else; do not widen its allowlist.
+- **An engine that inherits whoRU’s permissions.** Every child process that whoRU does not control runs disclaimed, as its own responsible process. A new engine must be spawned the same way.
 
 If you are unsure whether an idea fits, open an issue before writing code. That is faster for both of us.
 
