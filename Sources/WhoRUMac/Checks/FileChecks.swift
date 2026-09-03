@@ -209,12 +209,17 @@ public struct DeclarationsCheck: EvidenceCheck {
         var parts: [String] = []
         if let id = info.identifier { parts.append(id) }
         if let v = info.shortVersion { parts.append("v\(v)") }
-        let relevant = info.usageDescriptions.filter { Self.matches(key: $0.key, service: context.prompt.service) }
-        let raw = info.usageDescriptions.isEmpty ? "(no usage descriptions)" : info.usageDescriptions.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\n")
-        if let explanation = relevant.first?.value {
-            parts.append("explains the request: “\(explanation)”")
-        } else if !info.usageDescriptions.isEmpty {
-            parts.append("\(info.usageDescriptions.count) usage descriptions, none for this permission")
+        // The usage descriptions are the program's own words and travel to the
+        // model only under `claims`, so they go into facts, never into the summary.
+        let descriptions = info.usageDescriptions.sorted { $0.key < $1.key }
+        let relevant = descriptions.first { Self.matches(key: $0.key, service: context.prompt.service) }
+        let raw = descriptions.isEmpty ? "(no usage descriptions)" : descriptions.map { "\($0.key): \($0.value)" }.joined(separator: "\n")
+        if !descriptions.isEmpty { facts[Fact.usageDescriptions] = raw }
+        if let explanation = relevant?.value {
+            facts[Fact.usageDescription] = explanation
+            parts.append("the Info.plist explains this request (see claims.usage_description)")
+        } else if !descriptions.isEmpty {
+            parts.append("\(descriptions.count) usage descriptions, none for this permission")
         } else {
             parts.append("no usage descriptions")
         }

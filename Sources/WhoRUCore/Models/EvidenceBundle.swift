@@ -35,6 +35,16 @@ public struct HistorySummary: Codable, Sendable, Hashable {
     public var isEmpty: Bool { timesSeen == 0 && sameFileTimes == 0 }
 }
 
+/// Facts a declarations check emits for text the program wrote about itself.
+/// They are collected into `EvidenceBundle.claims` and removed from the
+/// evidence the model sees, so hostile text appears in exactly one place.
+extension Fact {
+    /// The `NS*UsageDescription` for the requested service, verbatim.
+    public static let usageDescription = "declarations.usageDescription"
+    /// Every usage description, as `key: text` lines.
+    public static let usageDescriptions = "declarations.usageDescriptions"
+}
+
 /// Everything the analyst receives. This is also exactly what “What was sent?”
 /// shows the user, after path redaction.
 public struct EvidenceBundle: Codable, Sendable, Hashable {
@@ -43,19 +53,30 @@ public struct EvidenceBundle: Codable, Sendable, Hashable {
     public var candidates: [SubjectCandidate]
     public var evidence: [EvidenceItem]
     public var hardScore: HardScoreResult
+    /// Every string the program under review wrote about itself: the name it
+    /// used in the dialog, its display name, bundle identifier, version and
+    /// usage descriptions. Claims, never facts; the prompt says so.
+    public var claims: [String: String]
     /// Dotted paths of fields written by the program under review.
     public var hostileFields: [String]
     public var history: HistorySummary?
     /// BCP-47 tag of the language the model should answer in.
     public var answerLanguage: String
 
+    /// The fields written by the program under review. Kept accurate: the model
+    /// is told to treat exactly these as claims.
+    public static let defaultHostileFields = ["prompt.title", "prompt.body", "prompt.requesterName", "subject.displayName", "claims"]
+
+    /// `claims` defaults to what `prompt`, `subject` and `evidence` say the
+    /// program wrote about itself, so no caller can forget to fill it in.
     public init(
         prompt: PermissionPrompt,
         subject: Subject?,
         candidates: [SubjectCandidate] = [],
         evidence: [EvidenceItem],
         hardScore: HardScoreResult,
-        hostileFields: [String] = ["prompt.body", "evidence.info_plist.raw"],
+        claims: [String: String]? = nil,
+        hostileFields: [String] = EvidenceBundle.defaultHostileFields,
         history: HistorySummary? = nil,
         answerLanguage: String = "en"
     ) {
@@ -64,13 +85,30 @@ public struct EvidenceBundle: Codable, Sendable, Hashable {
         self.candidates = candidates
         self.evidence = evidence
         self.hardScore = hardScore
+        self.claims = claims ?? Self.claims(prompt: prompt, subject: subject, evidence: evidence)
         self.hostileFields = hostileFields
         self.history = history
         self.answerLanguage = answerLanguage
     }
 
+    /// Gathers the program-authored strings into one labeled place.
+    public static func claims(prompt: PermissionPrompt, subject: Subject?, evidence: [EvidenceItem]) -> [String: String] {
+        var claims: [String: String] = ["requester_name": prompt.requesterName]
+        let declarations = evidence.first { $0.key == .declarations }?.facts ?? [:]
+        claims["display_name"] = subject?.displayName
+        claims["bundle_id"] = subject?.bundleID ?? declarations[Fact.bundleID]
+        claims["version"] = subject?.version ?? declarations[Fact.version]
+        claims["usage_description"] = declarations[Fact.usageDescription]
+        claims["usage_descriptions"] = declarations[Fact.usageDescriptions]
+        return claims
+    }
+
+    /// The facts that duplicate `claims`; the model must not see them twice.
+    private static let claimFacts: Set<String> = [Fact.usageDescription, Fact.usageDescriptions]
+
     /// The bundle as sent to the model: raw command output dropped (it is bulky
-    /// and mostly redundant with `facts`), home directory replaced with `~`.
+    /// and mostly redundant with `facts`), program-authored text moved out of
+    /// the evidence into `claims`, home directory replaced with `~`.
     public func redactedForModel(homeDirectory: String) -> EvidenceBundle {
         var copy = self
         func redact(_ s: String) -> String {
@@ -93,9 +131,10 @@ public struct EvidenceBundle: Codable, Sendable, Hashable {
             var item = item
             item.summary = redact(item.summary)
             item.raw = nil
-            item.facts = item.facts.mapValues(redact)
+            item.facts = item.facts.filter { !Self.claimFacts.contains($0.key) }.mapValues(redact)
             return item
         }
+        copy.claims = copy.claims.mapValues(redact)
         return copy
     }
 }
