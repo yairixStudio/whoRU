@@ -233,6 +233,8 @@ private struct AITab: View {
                 } else if EngineChoice.commandLineAgents.contains(engine) {
                     ModelPicker(engine: engine, settings: $model.settings)
                 }
+                Text("Agents run as separate processes without whoRU's permissions; only whoru-inspect, limited to the program under review, is available to them.")
+                    .font(.footnote).foregroundStyle(.secondary)
             } footer: {
                 if model.settings.localOnly {
                     Text(AppleFoundationAnalyst.isAvailable

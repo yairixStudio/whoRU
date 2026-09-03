@@ -3,6 +3,12 @@ import Foundation
 /// Shared plumbing for command-line agents (Codex CLI, Gemini CLI): locate the
 /// binary, run it in an empty scratch directory, extract the verdict JSON.
 /// These engines keep no session; follow-up questions resend the transcript.
+///
+/// Neither can be verified the way Claude Code is: both are Node scripts in a
+/// user-writable directory, with no signature to check. What protects the
+/// user is that they run disclaimed (`Command.run(disclaimResponsibility:)`),
+/// as their own responsible process, so whoRU's Accessibility grant and any
+/// other permission never reach them, and that they get no tools from us.
 enum CLIAgent {
     static func locate(names: [String], extraPaths: [String] = []) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -22,7 +28,7 @@ enum CLIAgent {
     }
 
     static func version(of executable: String) async -> String? {
-        guard let output = try? await Command.run(executable, ["--version"], timeout: .seconds(10)), output.succeeded else { return nil }
+        guard let output = try? await Command.run(executable, ["--version"], timeout: .seconds(10), disclaimResponsibility: true), output.succeeded else { return nil }
         return output.stdout.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").first.map(String.init)
     }
 
@@ -115,7 +121,7 @@ public struct CodexAnalyst: Analyst {
         var arguments = ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", CLIAgent.scratchDirectory, "-o", answerFile.path]
         if !model.isEmpty { arguments += ["-m", model] }
         arguments.append(prompt)
-        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory)
+        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory, disclaimResponsibility: true)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else {
             let text = (output.stdout + output.stderr).lowercased()
@@ -170,7 +176,7 @@ public struct GeminiAnalyst: Analyst {
     private func run(prompt: String) async throws -> String {
         var arguments = ["-p", prompt]
         if !model.isEmpty { arguments += ["-m", model] }
-        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory)
+        let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory, disclaimResponsibility: true)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else {
             let text = (output.stdout + output.stderr).lowercased()

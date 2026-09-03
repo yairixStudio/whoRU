@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "WhoRUCore", targets: ["WhoRUCore"]),
         .executable(name: "whoru", targets: ["whoru"]),
         .executable(name: "whoru-cli", targets: ["whoru-cli"]),
+        .executable(name: "whoru-inspect", targets: ["whoru-inspect"]),
     ],
     targets: [
         // Platform-agnostic core: models, parsing, scoring, analyst, store, settings.
@@ -42,6 +43,15 @@ let package = Package(
                 "WhoRUCore",
                 .target(name: "WhoRUMac", condition: .when(platforms: [.macOS])),
             ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+
+        // The only command an AI engine may run: fixed inspection tools on the
+        // program under review, named by environment variables. Core only, so
+        // it stays small and cannot reach the app's own capabilities.
+        .executableTarget(
+            name: "whoru-inspect",
+            dependencies: ["WhoRUCore"],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
 

@@ -186,6 +186,92 @@ private func verdict(_ kind: VerdictKind, confidence: Int = 90, recommendation: 
         let output = CommandOutput(stdout: #"{"is_error":true,"result":"boom"}"#, stderr: "", status: 0, durationMs: 1, timedOut: false)
         #expect(throws: AnalystError.self) { _ = try ClaudeCodeAnalyst.parse(output) }
     }
+
+    @Test func allowedToolsIsTheShimOrNothing() {
+        #expect(ClaudeCodeAnalyst.allowedTools(inspectShim: "/Applications/whoRU.app/Contents/MacOS/whoru-inspect") == ["Bash(/Applications/whoRU.app/Contents/MacOS/whoru-inspect:*)"])
+        #expect(ClaudeCodeAnalyst.allowedTools(inspectShim: nil).isEmpty)
+        #expect(ClaudeCodeAnalyst.toolInstruction(inspectShim: nil).contains("no commands"))
+        let instruction = ClaudeCodeAnalyst.toolInstruction(inspectShim: "/x/whoru-inspect")
+        #expect(instruction.contains("/x/whoru-inspect"))
+        for subcommand in ClaudeCodeAnalyst.inspectSubcommands { #expect(instruction.contains(subcommand)) }
+    }
+
+    @Test func subjectEnvironmentExpandsRedactedPaths() {
+        let subject = Subject(path: "~/Downloads/X.app/Contents/MacOS/X", pid: 4242, bundlePath: "~/Downloads/X.app", resolver: ResolverOutcome(strategy: "s", confidence: .high))
+        let env = ClaudeCodeAnalyst.subjectEnvironment(for: subject, homeDirectory: "/Users/me")
+        #expect(env["WHORU_SUBJECT_PATH"] == "/Users/me/Downloads/X.app")
+        #expect(env["WHORU_SUBJECT_EXECUTABLE"] == "/Users/me/Downloads/X.app/Contents/MacOS/X")
+        #expect(env["WHORU_SUBJECT_PID"] == "4242")
+        #expect(ClaudeCodeAnalyst.subjectEnvironment(for: nil).isEmpty)
+    }
+}
+
+/// Runs the built `whoru-inspect` binary. `swift test` builds every target,
+/// so the shim sits in the build directory next to this target's resource
+/// bundle (the test host itself lives in the toolchain, so `Bundle.main`
+/// would not lead there).
+@Suite struct InspectShimTests {
+    static var shim: String? {
+        ClaudeCodeAnalyst.locateInspectShim(near: Bundle.module.bundleURL.deletingLastPathComponent())
+    }
+
+    func run(_ arguments: [String], subject: String?, pid: Int32? = nil) async throws -> CommandOutput {
+        let shim = try #require(Self.shim, "whoru-inspect was not built next to the tests")
+        var env = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": FileManager.default.homeDirectoryForCurrentUser.path]
+        if let subject { env["WHORU_SUBJECT_PATH"] = subject }
+        if let pid { env["WHORU_SUBJECT_PID"] = String(pid) }
+        return try await Command.run(shim, arguments, timeout: .seconds(20), environment: env)
+    }
+
+    @Test func filesShowsFoldersUnderHomeOnly() async throws {
+        // Our own process has the test bundle open, somewhere under the home directory.
+        let output = try await run(["files"], subject: "/bin/ls", pid: ProcessInfo.processInfo.processIdentifier)
+        #expect(output.status == 0)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let lines = output.stdout.split(separator: "\n").map(String.init)
+        for line in lines {
+            #expect(line.hasPrefix("~"))
+            #expect(!line.contains(home))
+        }
+        #expect(Set(lines).count == lines.count)
+    }
+
+    @Test func processNeedsAPID() async throws {
+        let output = try await run(["process"], subject: "/bin/ls")
+        #expect(output.status == 2)
+        #expect(output.stderr.contains("WHORU_SUBJECT_PID"))
+    }
+
+    @Test func signaturePrintsCodesignOutput() async throws {
+        let output = try await run(["signature"], subject: "/bin/ls")
+        #expect(output.status == 0)
+        #expect(output.combined.contains("Identifier=com.apple.ls"))
+        #expect(output.combined.contains("CodeDirectory"))
+    }
+
+    @Test func helpListsSubcommands() async throws {
+        let output = try await run(["help"], subject: "/bin/ls")
+        #expect(output.status == 0)
+        for subcommand in ClaudeCodeAnalyst.inspectSubcommands { #expect(output.stdout.contains(subcommand)) }
+    }
+
+    @Test func unknownSubcommandExits2() async throws {
+        let output = try await run(["strings"], subject: "/bin/ls")
+        #expect(output.status == 2)
+        #expect(output.stderr.contains("unknown subcommand"))
+        let extra = try await run(["signature", "/etc/passwd"], subject: "/bin/ls")
+        #expect(extra.status == 2)
+    }
+
+    @Test func missingOrBogusSubjectExits2() async throws {
+        let missing = try await run(["signature"], subject: nil)
+        #expect(missing.status == 2)
+        #expect(missing.stderr.contains("WHORU_SUBJECT_PATH"))
+        let bogus = try await run(["signature"], subject: "/nonexistent/thing")
+        #expect(bogus.status == 2)
+        let folder = try await run(["signature"], subject: "/usr/bin")
+        #expect(folder.status == 2)
+    }
 }
 
 @Suite struct PortableSHA256Tests {

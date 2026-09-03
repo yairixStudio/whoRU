@@ -47,6 +47,14 @@ if swift build -c "$CONFIG" --product whoru-cli >>"$BUILD_LOG" 2>&1 && [ -x ".bu
 else
   echo "  (command-line tool not built; the app works without it)"
 fi
+# The inspection shim is the only command the AI engines may run. It must sit
+# next to the app binary: that is where the app looks for it.
+echo "▸ swift build -c $CONFIG --product whoru-inspect"
+if swift build -c "$CONFIG" --product whoru-inspect >>"$BUILD_LOG" 2>&1 && [ -x ".build/$CONFIG/whoru-inspect" ]; then
+  cp ".build/$CONFIG/whoru-inspect" "$APP/Contents/MacOS/whoru-inspect"
+else
+  echo "  (inspection shim not built; the AI engines get no commands at all)"
+fi
 # SwiftPM resource bundles, if any target declares resources.
 for bundle in ".build/$CONFIG"/whoRU_*.bundle; do
   [ -d "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
@@ -96,5 +104,6 @@ sign() {
   fi
 }
 [ -x "$APP/Contents/MacOS/whoru-cli" ] && sign "$APP/Contents/MacOS/whoru-cli"
+[ -x "$APP/Contents/MacOS/whoru-inspect" ] && sign "$APP/Contents/MacOS/whoru-inspect"
 sign "$APP"
 codesign --verify --strict "$APP" && echo "✓ $APP"
