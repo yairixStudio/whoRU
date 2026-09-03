@@ -144,7 +144,11 @@ public enum Command {
         let argv = CStringArray([executable] + arguments)
         let envp = environment.map { CStringArray($0.map { "\($0.key)=\($0.value)" }) }
         var pid: pid_t = 0
-        let spawnStatus = posix_spawn(&pid, executable, &actions, &attributes, argv.pointer, envp?.pointer ?? environ)
+        // withExtendedLifetime: ARC must not release either array (freeing the
+        // strings it strdup'd) until posix_spawn has finished reading them.
+        let spawnStatus = withExtendedLifetime((argv, envp)) {
+            posix_spawn(&pid, executable, &actions, &attributes, argv.pointer, envp?.pointer ?? environ)
+        }
         // The child owns its copies now; keeping ours open would keep the reads from ever reaching EOF.
         close(stdoutPipe[1])
         close(stderrPipe[1])

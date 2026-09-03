@@ -223,8 +223,11 @@ final class AppModel {
         }
         // The same program asking for the same thing again within a minute
         // (a cascade of prompts, or a re-shown dialog) reuses the scan in flight
-        // instead of starting another model run.
-        if let twin = sessions.first(where: { $0 !== session && $0.prompt.requesterName == prompt.requesterName && $0.prompt.service == prompt.service && Date().timeIntervalSince($0.startedAt) < 60 }) {
+        // instead of starting another model run. A fake dialog is never a twin:
+        // a genuine prompt must not inherit an impostor's verdict, nor the other
+        // way round, so an attacker cannot poison a real scan by drawing a fake
+        // one with the same name first.
+        if let twin = sessions.first(where: { $0 !== session && !$0.isFakeDialog && $0.prompt.requesterName == prompt.requesterName && $0.prompt.service == prompt.service && Date().timeIntervalSince($0.startedAt) < 60 }) {
             session.mirror(twin)
             return session
         }
@@ -313,8 +316,16 @@ final class AppModel {
             // The session may have moved on meanwhile (a verdict asked for by
             // hand, the decision): add the slow checks to it, do not replace it.
             var live = withSlowChecks.filled(from: session.record ?? withSlowChecks)
-            if let attributed = session.attribution, case .confirmed(let confirmed) = IdentityConfirmation.apply(to: live, attributed: attributed, running: session.runningCode, strictness: env.settings.strictness, locale: env.locale) {
-                live = confirmed
+            if let attributed = session.attribution {
+                let history = await historySummary(for: live)
+                if case .confirmed(let confirmed) = IdentityConfirmation.apply(to: live, attributed: attributed, running: session.runningCode, strictness: env.settings.strictness, locale: env.locale, history: history) {
+                    live = confirmed
+                }
+            } else if session.identity == .unconfirmed, session.identityApplies {
+                // No attribution arrived: keep the unconfirmed concern on the
+                // record the slow checks produced, so it is not scored away.
+                let history = await historySummary(for: live)
+                live = IdentityConfirmation.applyUnconfirmed(to: live, strictness: env.settings.strictness, locale: env.locale, history: history)
             }
             session.record = live
             if live != withSlowChecks { try? await store.save(live) }
@@ -326,9 +337,26 @@ final class AppModel {
     /// confirms the identity (with a check of the running process), or says
     /// the scan was about the wrong program, or leaves it unconfirmed. Never
     /// waits: a missing attribution is a normal outcome.
+    /// The store's summary of earlier scans of this file and publisher, so a
+    /// re-score after identity confirmation keeps the history concerns the
+    /// pipeline's own score had.
+    private func historySummary(for record: ScanRecord) async -> HistorySummary? {
+        let facts = HardScoreEngine.mergedFacts(record.evidence)
+        return try? await store.history(teamID: facts[Fact.signerTeamID], sha256: facts[Fact.sha256])
+    }
+
     private func reconcileIdentity(_ attributed: AttributedIdentity?, record: ScanRecord, for session: ScanSession, strictness: Strictness, locale: String) async -> IdentityConfirmation.Outcome {
         guard session.identityApplies else { return .unconfirmed }
+        // History was part of the pipeline's score; keep it so re-scoring after
+        // confirmation does not forget "you denied this before".
+        let history = await historySummary(for: record)
         guard let attributed else {
+            // The system had no record of the request. For a permission dialog
+            // that is itself a concern: the window could have been drawn by any
+            // program. Re-score with the unconfirmed identity so the panel and
+            // the badge say so instead of vouching for the dialog.
+            let updated = IdentityConfirmation.applyUnconfirmed(to: record, strictness: strictness, locale: locale, history: history)
+            if updated != record { session.adopt(confirmed: updated); try? await store.save(updated) }
             if session.identity == .pending { session.identity = .unconfirmed }
             return .unconfirmed
         }
@@ -341,7 +369,7 @@ final class AppModel {
             session.runningCode = info.facts
             AppLog.shared.info("identity", "running code of pid \(pid): valid \(info.valid), matches disk \(info.matchesDisk.map(String.init) ?? "n/a")\(info.error.map { " (\($0))" } ?? "") · \(info.path ?? diskPath)")
         }
-        let outcome = IdentityConfirmation.apply(to: record, attributed: attributed, running: session.runningCode, strictness: strictness, locale: locale)
+        let outcome = IdentityConfirmation.apply(to: record, attributed: attributed, running: session.runningCode, strictness: strictness, locale: locale, history: history)
         switch outcome {
         case .confirmed(let confirmed):
             session.attribution = attributed

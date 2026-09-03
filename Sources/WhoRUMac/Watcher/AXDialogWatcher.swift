@@ -184,6 +184,9 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         }
         retries[info.number] = nil
         let (texts, buttons) = textsAndButtons(in: window)
+        if AppLog.shared.minimumLevel == .debug {
+            AppLog.shared.debug("watcher", "window \(info.number) of \(info.owner) structure:\n" + describeTree(window))
+        }
         guard let index = texts.firstIndex(where: { parser.parse(title: $0) != nil }) else {
             log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public): \(texts.count, privacy: .public) texts, \(buttons.count, privacy: .public) buttons, no prompt pattern matched: \(texts.joined(separator: " | "), privacy: .public)")
             if known, Self.looksLikeAuthentication(texts: texts) {
@@ -365,6 +368,28 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return value as? String
+    }
+
+    /// Every element of a window with its role, subrole, identifier,
+    /// description, title and value: the raw material for telling one kind
+    /// of dialog from another. Debug level only (`--verbose`).
+    func describeTree(_ element: AXUIElement) -> String {
+        var lines: [String] = []
+        var budget = 200
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 10, budget > 0 else { return }
+            budget -= 1
+            var parts: [String] = []
+            for name in [kAXRoleAttribute, kAXSubroleAttribute, kAXIdentifierAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXValueAttribute, kAXHelpAttribute] {
+                if let value = attribute(name, of: node), !value.isEmpty {
+                    parts.append("\(name.dropFirst(2))=\(value.prefix(80))")
+                }
+            }
+            lines.append(String(repeating: "  ", count: depth) + parts.joined(separator: " "))
+            for child in children(of: node) { walk(child, depth: depth + 1) }
+        }
+        walk(element, depth: 0)
+        return lines.joined(separator: "\n")
     }
 
     private func children(of element: AXUIElement) -> [AXUIElement] {

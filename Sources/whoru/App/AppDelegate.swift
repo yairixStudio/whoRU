@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // --verbose: debug lines too, including the structure of every dialog window read.
+        if CommandLine.arguments.contains("--verbose") { AppLog.shared.minimumLevel = .debug }
         AppLog.shared.configure(directory: AppModel.logDirectory)
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"

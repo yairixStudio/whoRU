@@ -237,7 +237,11 @@ public struct ScanPipeline: Sendable {
             record.costUSD += result.costUSD
             record.analystSession = result.session
             record.fromCache = false
-            switch VerdictValidator().validate(result.verdict, against: hard, evidenceKeys: Set(record.evidence.map(\.key.rawValue))) {
+            // Validate against the record's current hard score, not the one
+            // captured when analysis began: identity confirmation may have
+            // turned it red in the meantime, and red is a floor the model
+            // cannot lift, whenever the answer arrives.
+            switch VerdictValidator().validate(result.verdict, against: record.hardScore ?? hard, evidenceKeys: Set(record.evidence.map(\.key.rawValue))) {
             case .accepted(let verdict):
                 record.verdict = verdict
                 log.info("analyst", "\(scanID) \(analyst.id) verdict in \(elapsedMs(since: analysisStarted)) ms: \(verdict.verdict.rawValue) \(verdict.confidence)% \(verdict.recommendation.rawValue) · \(result.inputTokens) in / \(result.outputTokens) out · $\(String(format: "%.4f", result.costUSD))")

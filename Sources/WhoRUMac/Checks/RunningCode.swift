@@ -70,12 +70,32 @@ public enum RunningCode {
             }
             info.cdhash = uniqueHash(of: staticCode)
         }
+        // The pid may have been reused between the attribution and this check,
+        // or the process may be a different program that happens to share the
+        // pid. If what is running is not the file we examined, this is not our
+        // subject and we say nothing: comparing hashes would raise a false red.
+        if let runningPath = info.path, !Self.isSameFile(runningPath, diskPath) {
+            info.matchesDisk = nil
+            info.error = "process \(pid) is now \(runningPath), not the program that was scanned"
+            return info
+        }
         if let running = info.cdhash, !disk.hashes.isEmpty {
             // A universal file has one hash per slice; the process runs one of them.
             info.matchesDisk = disk.hashes.contains(running)
             if info.matchesDisk == false, let exact = disk.hashes.first { info.diskCdhash = exact }
         }
         return info
+    }
+
+    /// Whether the running code and the scanned file are the same program.
+    /// `SecCodeCopyPath` returns the bundle for an app but the executable for a
+    /// bare binary, while the scanned path may be the Mach-O inside the bundle,
+    /// so one being the other's prefix counts as a match. Symlinks are resolved.
+    static func isSameFile(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        let ra = URL(fileURLWithPath: a).resolvingSymlinksInPath().path
+        let rb = URL(fileURLWithPath: b).resolvingSymlinksInPath().path
+        return ra == rb || ra.hasPrefix(rb + "/") || rb.hasPrefix(ra + "/")
     }
 
     /// Code directory hashes of the file for every architecture it carries

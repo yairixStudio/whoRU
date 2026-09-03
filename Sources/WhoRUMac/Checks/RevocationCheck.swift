@@ -81,7 +81,12 @@ public struct RevocationCheck: EvidenceCheck {
         }
         let codes = [Int(outcome.status), outcome.errorCode].compactMap { $0 }
         let codeSaysRevoked = codes.contains { revokedCodes.contains($0) }
-        let textSaysRevoked = outcome.description?.range(of: "revoked", options: .caseInsensitive) != nil
+        // The description fallback backs up the codes; require the word on its
+        // own and reject the negations ("not revoked", "unrevoked") so an error
+        // that merely mentions revocation is not read as one.
+        let text = (outcome.description ?? "").lowercased()
+        let textSaysRevoked = text.range(of: #"(?<![a-z])revoked(?![a-z])"#, options: .regularExpression) != nil
+            && text.range(of: #"(not|un)[- ]?revoked"#, options: .regularExpression) == nil
         if codeSaysRevoked || textSaysRevoked {
             return Classification(status: .fail, summary: "Apple revoked the signing certificate", facts: [Fact.signatureRevoked: "true"])
         }

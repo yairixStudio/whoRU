@@ -6,8 +6,13 @@ import Foundation
 /// added by another process does not carry a valid signature and the whole
 /// file is then ignored rather than partly honoured.
 ///
-/// Tamper evidence only: the file is plain JSON, and a file with no signature
-/// yet (written before signing existed) is trusted once and signed on save.
+/// The trust list is the one file whose content changes a verdict, so it is
+/// held to a stricter rule than settings: once whoRU can sign (a key exists),
+/// a file with no signature is treated like a tampered one and its trust
+/// decisions are ignored, because an attacker can delete a sidecar as easily
+/// as edit the file. Trust-on-first-use would reopen exactly the hole the
+/// signature closes. A missing signature is honoured only when there is no key
+/// to verify with at all (an older install, or the command line without one).
 public struct PublisherOverridesStore: Sendable {
     public let url: URL
     public let integrity: FileIntegrity
@@ -30,6 +35,10 @@ public struct PublisherOverridesStore: Sendable {
         }
         let (data, state) = try integrity.read(url)
         if state == .tampered { return ([], state) }
+        // A key exists but the file is unsigned: an attacker who deleted the
+        // sidecar looks the same as an upgrade from a pre-signing version, and
+        // for the trust list the safe reading is to honour nothing.
+        if state == .missingSignature, integrity.canVerify { return ([], .tampered) }
         return (try JSONDecoder().decode([Publisher].self, from: data), state)
     }
 

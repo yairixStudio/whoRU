@@ -144,10 +144,24 @@ private let testKey = Data((0..<32).map { UInt8($0) })
         let p = paths()
         let store = PublisherOverridesStore(paths: p, integrity: FileIntegrity(key: testKey))
         #expect(try store.load().publishers.isEmpty)
+        // A trust list written with no signature, read by a store that can
+        // verify: an attacker who deleted the sidecar looks the same, so no
+        // trust decision from it is honoured.
         let old = [Publisher(teamID: "OLD", name: "Old", source: .user, trust: .blocked)]
         try PublisherOverridesStore(paths: p).save(old)
         let loaded = try store.load()
-        #expect(loaded.state == .missingSignature)
+        #expect(loaded.state == .tampered)
+        #expect(loaded.publishers.isEmpty)
+    }
+
+    @Test func unsignedTrustListIsHonouredWithoutAKey() throws {
+        // With no key to verify against (an older install, or the CLI), an
+        // unsigned file is used as-is: tamper evidence needs a key.
+        let p = paths()
+        let old = [Publisher(teamID: "OLD", name: "Old", source: .user, trust: .blocked)]
+        try PublisherOverridesStore(paths: p).save(old)
+        let loaded = try PublisherOverridesStore(paths: p, integrity: .unverifiable).load()
+        #expect(loaded.state == .unverifiable)
         #expect(loaded.publishers == old)
     }
 }

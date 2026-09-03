@@ -71,6 +71,15 @@ public struct HardScoreEngine: Sendable {
         if gatekeeperRejected {
             concerns.append(ScoreReason(code: "gatekeeper.rejected", ref: .gatekeeper, params: ["publisher": publisherName]))
         }
+        // The system's own record of the request did not confirm the requester.
+        // A window rendered by the shared macOS alert renderer (the same one
+        // that draws genuine permission prompts) cannot be told apart from a
+        // real prompt by inspection, so an unconfirmed request is a real
+        // concern for a permission dialog: in strict mode it forbids green.
+        let identityUnconfirmed = fact(Fact.identityConfirmed) == "false" && prompt.service.tccServiceName != nil
+        if identityUnconfirmed {
+            concerns.append(ScoreReason(code: "identity.unconfirmed", ref: .identity))
+        }
         switch signerKind {
         case .unsigned: concerns.append(ScoreReason(code: "unsigned", ref: .signerIdentity))
         case .adhoc: concerns.append(ScoreReason(code: "adhoc", ref: .signerIdentity))
@@ -141,6 +150,15 @@ public struct HardScoreEngine: Sendable {
             isTrusted = false
         }
         if collision {
+            green.removeAll()
+            isSystem = false
+            isTrusted = false
+            matchesOfficial = false
+        }
+        // Strict mode will not vouch for a permission dialog the system has no
+        // record of: it could have been drawn by any program, not the one the
+        // evidence is about. Standard mode keeps the green but shows the concern.
+        if identityUnconfirmed, strictness == .strict {
             green.removeAll()
             isSystem = false
             isTrusted = false

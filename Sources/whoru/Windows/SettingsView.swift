@@ -411,7 +411,15 @@ private struct PrivacyTab: View {
 
     private func resetAll() {
         try? FileManager.default.removeItem(at: model.paths.applicationSupport)
-        for key in SecretKey.allCases { try? model.secrets.setSecret(nil, for: key) }
+        // Every user secret, but not the store-integrity key: it is an internal
+        // signing key, not a credential, and the store still in memory signs the
+        // fresh settings file with it. Deleting it here would leave that file
+        // signed by a key the next launch no longer has, and read as tampered.
+        for key in SecretKey.allCases where key != .storeIntegrityKey {
+            try? model.secrets.setSecret(nil, for: key)
+        }
+        model.publisherOverrides = []
+        model.integrityWarning = nil
         model.settings = WhoRUCore.Settings()
     }
 }

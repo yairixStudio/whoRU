@@ -51,8 +51,11 @@ public struct RunningCodeFacts: Sendable, Hashable {
         self.error = error
     }
 
-    /// Whether the result says anything the score may act on.
-    public var isConclusive: Bool { error != "unsigned" }
+    /// Whether the result is a definite comparison the score may act on: the
+    /// running code was hashed and matched (or did not match) the file on disk.
+    /// A process that had exited, whose pid was reused, or whose code could not
+    /// be hashed is not conclusive, so it never turns a scan red on its own.
+    public var isConclusive: Bool { error == nil && matchesDisk != nil }
 }
 
 /// Reconciles a finished scan with the platform's own attribution of the
@@ -73,7 +76,7 @@ public enum IdentityConfirmation {
     public static let verdictDroppedReason = "hard evidence changed after the verdict"
     public static let attributionStrategy = "system_attribution"
 
-    public static func apply(to record: ScanRecord, attributed: AttributedIdentity?, running: RunningCodeFacts?, strictness: Strictness, locale: String) -> Outcome {
+    public static func apply(to record: ScanRecord, attributed: AttributedIdentity?, running: RunningCodeFacts?, strictness: Strictness, locale: String, history: HistorySummary? = nil) -> Outcome {
         guard let attributed else { return .unconfirmed }
         guard let subject = record.subject, names(subject, attributed: attributed) else {
             guard let path = attributed.path else { return .unconfirmed }
@@ -118,7 +121,7 @@ public enum IdentityConfirmation {
             replace(runningItem, in: &updated.evidence)
         }
 
-        let hard = HardScoreEngine(strictness: strictness).score(updated.evidence, subject: subject, prompt: record.prompt, history: nil, candidates: record.candidates)
+        let hard = HardScoreEngine(strictness: strictness).score(updated.evidence, subject: subject, prompt: record.prompt, history: history, candidates: record.candidates)
         updated.hardScore = hard
         updated.deterministicHeadline = HeadlineComposer().headline(for: hard, subject: subject, prompt: record.prompt, locale: locale)
 
@@ -130,6 +133,34 @@ public enum IdentityConfirmation {
             updated.verdictRejected = verdictDroppedReason
         }
         return .confirmed(updated)
+    }
+
+    /// The record when the system had no record of the request: a permission
+    /// dialog whose requester could not be confirmed. The score records the
+    /// `identity.unconfirmed` concern (an amber ceiling under strict mode), so
+    /// a window a program merely drew to look like a prompt cannot earn a clean
+    /// bill of health. Only for a dialog scan of a service the system tracks.
+    public static func applyUnconfirmed(to record: ScanRecord, strictness: Strictness, locale: String, history: HistorySummary? = nil) -> ScanRecord {
+        guard record.prompt.service.tccServiceName != nil, let subject = record.subject else { return record }
+        // A confirmed identity already settled the question; do not override it.
+        guard HardScoreEngine.mergedFacts(record.evidence)[Fact.identityConfirmed] != "true" else { return record }
+        var updated = record
+        let item = EvidenceItem(
+            key: .identity, status: .warn, weight: .high,
+            summary: "macOS has no record of this request; whoRU cannot confirm the prompt is genuine",
+            method: "system log of the request (tccd)",
+            facts: [Fact.identityConfirmed: "false"]
+        )
+        replace(item, in: &updated.evidence)
+        let hard = HardScoreEngine(strictness: strictness).score(updated.evidence, subject: subject, prompt: record.prompt, history: history, candidates: record.candidates)
+        updated.hardScore = hard
+        updated.deterministicHeadline = HeadlineComposer().headline(for: hard, subject: subject, prompt: record.prompt, locale: locale)
+        if hard.score != .green, let verdict = updated.verdict,
+           verdict.verdict == .legitimate || verdict.verdict == .probablyLegitimate || verdict.recommendation == .allow {
+            updated.verdict = nil
+            updated.verdictRejected = verdictDroppedReason
+        }
+        return updated
     }
 
     /// Whether the attribution names the scanned program: the same bundle

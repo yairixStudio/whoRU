@@ -107,8 +107,11 @@ private let attributedChrome = AttributedIdentity(pid: 10, binaryPath: "/Applica
     }
 
     @Test func aVerdictThatAlreadyWarnedStays() {
+        // The running code is the file on disk but fails validation in memory
+        // (a tampered process): a real red, and a verdict that already warned
+        // is not dropped because it did not contradict the new evidence.
         let before = record(verdict: verdict(.suspicious, recommendation: .deny))
-        let running = RunningCodeFacts(valid: false, matchesDisk: nil, error: "invalid signature")
+        let running = RunningCodeFacts(valid: false, matchesDisk: true, cdhash: "aa", diskCdhash: "aa")
         guard case .confirmed(let updated) = IdentityConfirmation.apply(to: before, attributed: attributedChrome, running: running, strictness: .standard, locale: "en") else {
             Issue.record("expected confirmed"); return
         }
@@ -116,6 +119,32 @@ private let attributedChrome = AttributedIdentity(pid: 10, binaryPath: "/Applica
         #expect(updated.hardScore?.reasons.first?.code == "running.invalid")
         #expect(updated.verdict != nil)
         #expect(updated.verdictRejected == nil)
+    }
+
+    @Test func aProcessThatCannotBeComparedIsNotAFinding() {
+        // The pid had exited, or its code could not be hashed: no comparison
+        // was possible, so it must not turn the scan red or add evidence.
+        let before = record(verdict: verdict(.legitimate, recommendation: .allow))
+        let gone = RunningCodeFacts(valid: false, matchesDisk: nil, error: "process 42 has no code object (gone?)")
+        guard case .confirmed(let updated) = IdentityConfirmation.apply(to: before, attributed: attributedChrome, running: gone, strictness: .standard, locale: "en") else {
+            Issue.record("expected confirmed"); return
+        }
+        #expect(updated.evidence.first { $0.key == .runningCode } == nil)
+        #expect(updated.hardScore?.score == .green)
+        #expect(updated.verdict != nil)
+        #expect(updated.verdictRejected == nil)
+    }
+
+    @Test func reusedPidNeverProducesAFalseMismatch() {
+        // What RunningCode.validate returns when the pid now runs a different
+        // program than the one that was scanned: inconclusive, never a mismatch.
+        let reused = RunningCodeFacts(valid: true, matchesDisk: nil, cdhash: "aa", path: "/Applications/Other.app", error: "process 42 is now /Applications/Other.app, not the program that was scanned")
+        #expect(!reused.isConclusive)
+        guard case .confirmed(let updated) = IdentityConfirmation.apply(to: record(), attributed: attributedChrome, running: reused, strictness: .standard, locale: "en") else {
+            Issue.record("expected confirmed"); return
+        }
+        #expect(updated.evidence.first { $0.key == .runningCode } == nil)
+        #expect(updated.hardScore?.score == .green)
     }
 
     @Test func validRunningCodeIsAPassAndUnsignedIsNotAFinding() {
@@ -178,5 +207,57 @@ private let attributedChrome = AttributedIdentity(pid: 10, binaryPath: "/Applica
         #expect(origins[0].isSystem)
         #expect(!origins[1].isSystem)
         #expect(DialogInstance(id: "1", pid: 1, frame: Rect(x: 0, y: 0, width: 1, height: 1), title: "t").origin == .system(bundleID: ""))
+    }
+}
+
+@Suite struct UnconfirmedIdentityTests {
+    private let prompt = PermissionPrompt(title: "“Google Chrome” would like to access files in your Downloads folder.", requesterName: "Google Chrome", service: .downloadsFolder, requestPhrase: "access files in your Downloads folder")
+    private let chrome = Subject(path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", bundleID: "com.google.Chrome", displayName: "Google Chrome", bundlePath: "/Applications/Google Chrome.app", resolver: ResolverOutcome(strategy: "running_process_basename", confidence: .high))
+    private var notarized: [EvidenceItem] {
+        [
+            EvidenceItem(key: .signerIdentity, status: .pass, weight: .critical, summary: "Google", facts: [Fact.signerKind: "developerID", Fact.signerTeamID: "EQHXZ8M8AV", Fact.signatureValid: "true"]),
+            EvidenceItem(key: .gatekeeper, status: .pass, weight: .high, summary: "notarized", facts: [Fact.notarized: "true"]),
+            EvidenceItem(key: .publisher, status: .pass, weight: .high, summary: "Google LLC", facts: [Fact.publisherName: "Google LLC", Fact.publisherTrust: "normal"]),
+        ]
+    }
+    private func record(verdict: Verdict? = nil) -> ScanRecord {
+        var r = ScanRecord(prompt: prompt, subject: chrome, evidence: notarized)
+        r.hardScore = HardScoreEngine().score(notarized, subject: chrome, prompt: prompt)
+        r.verdict = verdict
+        return r
+    }
+    private func allowVerdict() -> Verdict {
+        Verdict(verdict: .legitimate, confidence: 90, headline: "h", whatItIs: "w", whyItAsks: "y", fit: .matches, recommendation: .allow, reasons: [], ifDenied: "d", suggestedQuestions: [], technicalNotes: "")
+    }
+
+    @Test func unconfirmedIsAConcernAndStrictCapsGreen() {
+        let standard = IdentityConfirmation.applyUnconfirmed(to: record(), strictness: .standard, locale: "en")
+        #expect(standard.hardScore?.score == .green)
+        #expect(standard.hardScore?.reasons.contains { $0.code == "identity.unconfirmed" } == true)
+        #expect(standard.evidence.contains { $0.key == .identity && $0.facts[Fact.identityConfirmed] == "false" })
+
+        let strict = IdentityConfirmation.applyUnconfirmed(to: record(), strictness: .strict, locale: "en")
+        #expect(strict.hardScore?.score == .amber)
+        #expect(strict.hardScore?.reasons.first?.code == "identity.unconfirmed")
+    }
+
+    @Test func strictWithdrawsAnAllowVerdictWhenTheRequestIsUnconfirmed() {
+        let updated = IdentityConfirmation.applyUnconfirmed(to: record(verdict: allowVerdict()), strictness: .strict, locale: "en")
+        #expect(updated.hardScore?.score == .amber)
+        #expect(updated.verdict == nil)
+        #expect(updated.verdictRejected == IdentityConfirmation.verdictDroppedReason)
+    }
+
+    @Test func aConfirmedIdentityIsNotOverwritten() {
+        var confirmed = record()
+        confirmed.evidence.append(EvidenceItem(key: .identity, status: .pass, weight: .high, summary: "confirmed", facts: [Fact.identityConfirmed: "true"]))
+        let result = IdentityConfirmation.applyUnconfirmed(to: confirmed, strictness: .strict, locale: "en")
+        #expect(result.evidence.first { $0.key == .identity }?.facts[Fact.identityConfirmed] == "true")
+    }
+
+    @Test func unconfirmedSentenceExistsInBothLanguages() {
+        for locale in ["en", "he"] {
+            #expect(L10n.text("reason.identity.unconfirmed", locale: locale) != "reason.identity.unconfirmed")
+        }
     }
 }
