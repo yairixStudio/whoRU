@@ -325,20 +325,41 @@ public protocol SettingsStore: Sendable {
     func save(_ settings: Settings) throws
 }
 
+/// `settings.json` in Application Support, signed with `FileIntegrity` so an
+/// edit by another process (engine paths, strictness) does not go unnoticed.
+/// Without a key the file is read and written like before, unverified.
 public struct JSONFileSettingsStore: SettingsStore {
     public let url: URL
+    public let integrity: FileIntegrity
 
     public init(paths: Paths) {
+        self.init(paths: paths, integrity: .unverifiable)
+    }
+
+    public init(paths: Paths, integrity: FileIntegrity) {
         url = paths.applicationSupport.appendingPathComponent("settings.json")
+        self.integrity = integrity
     }
 
     public func load() throws -> Settings {
-        guard FileManager.default.fileExists(atPath: url.path) else { return Settings() }
-        let data = try Data(contentsOf: url)
+        try loadChecked().settings
+    }
+
+    /// The settings and what the signature said. A tampered file is not used
+    /// at all: the defaults come back, and the caller can tell the user. A
+    /// file without a signature (written before signing existed) is trusted
+    /// this once and signed on the next save.
+    public func loadChecked() throws -> (settings: Settings, state: IntegrityState) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return (Settings(), integrity.canVerify ? .verified : .unverifiable)
+        }
+        let (data, state) = try integrity.read(url)
+        if state == .tampered { return (Settings(), state) }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         // Fields added after a file was written decode with their defaults.
-        return (try? decoder.decode(Settings.self, from: data)) ?? Settings.merging(defaults: Settings(), with: data)
+        let settings = (try? decoder.decode(Settings.self, from: data)) ?? Settings.merging(defaults: Settings(), with: data)
+        return (settings, state)
     }
 
     public func save(_ settings: Settings) throws {
@@ -346,7 +367,7 @@ public struct JSONFileSettingsStore: SettingsStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(settings).write(to: url, options: .atomic)
+        try integrity.write(try encoder.encode(settings), to: url)
     }
 }
 
@@ -360,11 +381,14 @@ public protocol SecretStore: Sendable {
 public enum SecretKey: String, Sendable, CaseIterable {
     case anthropicAPIKey = "anthropic-api-key"
     case virusTotalAPIKey = "virustotal-api-key"
+    /// Base64 HMAC key that signs settings.json and publishers.json; see `FileIntegrity`.
+    case storeIntegrityKey = "store-integrity-key"
 
     public var environmentVariable: String {
         switch self {
         case .anthropicAPIKey: "ANTHROPIC_API_KEY"
         case .virusTotalAPIKey: "VIRUSTOTAL_API_KEY"
+        case .storeIntegrityKey: "WHORU_STORE_INTEGRITY_KEY"
         }
     }
 }

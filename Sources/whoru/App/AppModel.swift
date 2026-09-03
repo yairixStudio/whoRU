@@ -12,8 +12,12 @@ import WhoRUMac
 final class AppModel {
     let paths = DefaultPaths()
     let settingsStore: JSONFileSettingsStore
+    let publisherStore: PublisherOverridesStore
     let store: JSONFileScanStore
     let secrets: any SecretStore = MacEnvironment.secrets()
+    /// One plain sentence when a store file failed its signature at launch and
+    /// was ignored; Settings shows it until the user dismisses it.
+    var integrityWarning: String?
 
     var settings: Settings {
         didSet {
@@ -30,11 +34,7 @@ final class AppModel {
     /// The user's trust decisions and additions, merged over the built-in list.
     var publisherOverrides: [Publisher] = [] {
         didSet {
-            let url = paths.applicationSupport.appendingPathComponent("publishers.json")
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try? FileManager.default.createDirectory(at: paths.applicationSupport, withIntermediateDirectories: true)
-            try? encoder.encode(publisherOverrides).write(to: url, options: .atomic)
+            try? publisherStore.save(publisherOverrides)
             environmentTask = nil
         }
     }
@@ -66,13 +66,31 @@ final class AppModel {
     private var environmentTask: Task<ScanEnvironment, Never>?
 
     init() {
-        settingsStore = JSONFileSettingsStore(paths: paths)
+        // The app owns the signing key: created in the Keychain on first
+        // launch, so files from an earlier version are trusted once, then signed.
+        let integrity = FileIntegrity(key: IntegrityKey.load(from: MacEnvironment.secrets(), createIfMissing: true))
+        settingsStore = JSONFileSettingsStore(paths: paths, integrity: integrity)
+        publisherStore = PublisherOverridesStore(paths: paths, integrity: integrity)
         store = JSONFileScanStore(paths: paths)
-        settings = (try? settingsStore.load()) ?? Settings()
-        let overridesURL = paths.applicationSupport.appendingPathComponent("publishers.json")
-        if let data = try? Data(contentsOf: overridesURL), let saved = try? JSONDecoder().decode([Publisher].self, from: data) {
-            publisherOverrides = saved
+        let loadedSettings = (try? settingsStore.loadChecked()) ?? (Settings(), .unverifiable)
+        settings = loadedSettings.settings
+        var warnings: [String] = []
+        if loadedSettings.state == .tampered {
+            warnings.append("Your settings file was changed outside whoRU and was ignored.")
+            AppLog.shared.error("integrity", "settings.json failed its signature; defaults used")
+        } else if loadedSettings.state == .missingSignature {
+            // Sign it now rather than trusting it again at every launch.
+            try? settingsStore.save(settings)
         }
+        let loadedPublishers = (try? publisherStore.load()) ?? ([], .unverifiable)
+        publisherOverrides = loadedPublishers.publishers
+        if loadedPublishers.state == .tampered {
+            warnings.append("Your publisher trust list was changed outside whoRU and was ignored.")
+            AppLog.shared.error("integrity", "publishers.json failed its signature; overrides ignored")
+        } else if loadedPublishers.state == .missingSignature {
+            try? publisherStore.save(publisherOverrides)
+        }
+        integrityWarning = warnings.isEmpty ? nil : warnings.joined(separator: " ")
         Task { await refreshEngineDescription() }
         Task { monthlySpend = (try? await store.monthlySpend()) ?? 0 }
         // Retention 0 means forever.

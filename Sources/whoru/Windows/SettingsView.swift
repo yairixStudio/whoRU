@@ -28,6 +28,17 @@ private struct GeneralTab: View {
 
     var body: some View {
         Form {
+            if let warning = model.integrityWarning {
+                Section {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        Text(warning)
+                        Spacer(minLength: 8)
+                        Button("Dismiss") { model.integrityWarning = nil }.controlSize(.small)
+                    }
+                }
+            }
+
             Section {
                 Toggle("Launch at login", isOn: $model.settings.launchAtLogin)
                 Toggle("Show next to permission dialogs", isOn: $model.settings.showNextToDialogs)

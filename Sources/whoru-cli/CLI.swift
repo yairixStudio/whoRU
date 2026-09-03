@@ -63,7 +63,7 @@ struct CLI {
 
         #if os(macOS)
         let paths = DefaultPaths()
-        var settings = (try? JSONFileSettingsStore(paths: paths).load()) ?? Settings()
+        var settings = loadSettings(paths: paths)
         AppLog.shared.configure(directory: FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!.appendingPathComponent("Logs/whoRU", isDirectory: true))
         AppLog.shared.echoToStderr = options.flag("--verbose")
         if noAI { settings.engine = .none }
@@ -160,6 +160,23 @@ struct CLI {
         }
     }
 
+    #if os(macOS)
+    /// The app's settings, checked against the app's signature when the key
+    /// can be read. The key is never created here: the tool is signed
+    /// differently from the app, so the Keychain may ask or refuse, and a
+    /// terminal command must not depend on that. Without the key the file is
+    /// used unverified.
+    static func loadSettings(paths: DefaultPaths) -> Settings {
+        let key = IntegrityKey.load(from: MacEnvironment.secrets(), createIfMissing: false)
+        let store = JSONFileSettingsStore(paths: paths, integrity: FileIntegrity(key: key))
+        guard let loaded = try? store.loadChecked() else { return Settings() }
+        if loaded.state == .tampered {
+            Output.stderr.line("warning: settings.json was changed outside whoRU; using defaults")
+        }
+        return loaded.settings
+    }
+    #endif
+
     // MARK: parse / resolve / history / doctor
 
     static func parse(_ args: [String]) {
@@ -207,7 +224,7 @@ struct CLI {
     static func doctor() async {
         #if os(macOS)
         let paths = DefaultPaths()
-        let settings = (try? JSONFileSettingsStore(paths: paths).load()) ?? Settings()
+        let settings = loadSettings(paths: paths)
         let secrets = MacEnvironment.secrets()
         print("data:            \(paths.applicationSupport.path)")
         print("log:             ~/Library/Logs/whoRU/whoru.log")
