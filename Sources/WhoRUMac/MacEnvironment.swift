@@ -36,11 +36,11 @@ public enum MacEnvironment {
         if settings.localOnly {
             switch settings.engine {
             case .none: return nil
-            case .local: return explicitAnalyst(settings: settings, secrets: secrets)
+            case .local: return await explicitAnalyst(settings: settings, secrets: secrets)
             default: return AppleFoundationAnalyst.isAvailable ? AppleFoundationAnalyst() : nil
             }
         }
-        if settings.engine != .auto, settings.engine != .none, let explicit = explicitAnalyst(settings: settings, secrets: secrets) {
+        if settings.engine != .auto, settings.engine != .none, let explicit = await explicitAnalyst(settings: settings, secrets: secrets) {
             return explicit
         }
         switch settings.engine {
@@ -72,12 +72,22 @@ public enum MacEnvironment {
         }
     }
 
-    private static func explicitAnalyst(settings: Settings, secrets: any SecretStore) -> (any Analyst)? {
+    private static func explicitAnalyst(settings: Settings, secrets: any SecretStore) async -> (any Analyst)? {
         switch settings.engine {
         case .claudeAPI:
             return secrets.secret(.anthropicAPIKey).map { ClaudeAPIAnalyst(apiKey: $0, hardTimeout: .seconds(settings.hardTimeoutSeconds)) }
         case .claudeCode:
-            return (settings.claudeCodePath ?? ClaudeCodeAnalyst.locate()).map { ClaudeCodeAnalyst(executable: $0, model: settings.model(for: .claudeCode)) }
+            // An explicit choice is verified like the automatic one: the path
+            // is user-writable and a swapped binary would run with the user's
+            // sign-in. Failing verification means no agent, not a fallback.
+            guard let path = settings.claudeCodePath ?? ClaudeCodeAnalyst.locate() else { return nil }
+            guard await ClaudeCodeVerifier.isTrusted(path) else {
+                AppLog.shared.error("engine", "Claude Code at \(path) failed signature verification; not running it")
+                return nil
+            }
+            return ClaudeCodeAnalyst(executable: path, model: settings.model(for: .claudeCode))
+        // Codex and Gemini are Node scripts and cannot be signature-verified;
+        // they are protected by running disclaimed, with no tools (CLIAgent).
         case .codex:
             return (settings.codexPath ?? CodexAnalyst.locate()).map { CodexAnalyst(executable: $0, model: settings.model(for: .codex)) }
         case .gemini:
@@ -121,13 +131,16 @@ public enum MacEnvironment {
 }
 
 /// The Claude Code binary gets the same scrutiny as anything else before it is
-/// allowed to run on our behalf.
+/// allowed to run on our behalf: a valid Developer ID signature from
+/// Anthropic's team, with the hardened runtime the genuine builds ship with
+/// (checked against 2.1.259, `flags=0x10000(runtime)`), so that a binary
+/// with the right certificate but injected code does not pass either.
 public enum ClaudeCodeVerifier {
     public static let expectedTeamID = "Q6L2SF6YDW"
 
     public static func isTrusted(_ path: String) async -> Bool {
         let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         let info = await CodeSignature.inspect(path: resolved)
-        return info.valid && info.kind == .developerID && info.teamID == expectedTeamID
+        return info.valid && info.kind == .developerID && info.teamID == expectedTeamID && info.hardenedRuntime
     }
 }
