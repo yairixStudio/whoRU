@@ -163,7 +163,7 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     private func inspect(_ info: WindowInfo) {
         let started = Date()
         let known = isKnownPromptProcess(info.pid)
-        guard let window = axWindow(pid: info.pid, matching: info.frame) else {
+        guard let window = axWindow(pid: info.pid, matching: info.frame, known: known) else {
             // Not exposed through AX (yet). Try again on the next poll a few times, then give up.
             retries[info.number, default: 0] += 1
             if retries[info.number] == 1, known {
@@ -172,7 +172,8 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             if retries[info.number, default: 0] > 6 {
                 retries[info.number] = nil
                 log.info("window \(info.number, privacy: .public) of \(info.owner, privacy: .public) (layer \(info.layer, privacy: .public)) exposes no AX window")
-                AppLog.shared.warn("watcher", "window \(info.number) of \(info.owner) (layer \(info.layer), \(Int(info.frame.width))×\(Int(info.frame.height))) exposes no AX window")
+                let line = "window \(info.number) of \(info.owner) (layer \(info.layer), \(Int(info.frame.width))×\(Int(info.frame.height))) exposes no AX window"
+                if known { AppLog.shared.warn("watcher", line) } else { AppLog.shared.info("watcher", line) }
                 if known {
                     // Still worth showing: the panel explains that the text could not be read.
                     emit(info, title: "", body: nil, buttons: [], started: started)
@@ -296,28 +297,38 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     /// dialog process is one); for those we go straight to hit-testing.
     private var noWindowList: Set<pid_t> = []
 
-    private func axWindow(pid: pid_t, matching frame: Rect) -> AXUIElement? {
+    /// Whether an AX element sits where the on-screen window is. An element
+    /// somewhere else is a different window, whatever else it may be.
+    private func element(_ element: AXUIElement, matches frame: Rect) -> Bool {
+        guard let f = self.frame(of: element) else { return false }
+        return abs(f.x - frame.x) < 6 && abs(f.y - frame.y) < 6 && abs(f.width - frame.width) < 6
+    }
+
+    /// For a known dialog process the AX frame can be unreliable, so its
+    /// single, focused or main window is accepted on trust. For any other
+    /// process only an element at the window's own position counts: a
+    /// browser's context menu, say, must not be answered with the text of
+    /// the browser window behind it.
+    private func axWindow(pid: pid_t, matching frame: Rect, known: Bool) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
         if !noWindowList.contains(pid) {
             var value: CFTypeRef?
             let status = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
             if status == .success, let windows = value as? [AXUIElement] {
-                for window in windows {
-                    if let f = self.frame(of: window), abs(f.x - frame.x) < 6, abs(f.y - frame.y) < 6, abs(f.width - frame.width) < 6 {
-                        return window
-                    }
-                }
-                if windows.count == 1 { return windows[0] }
+                for window in windows where element(window, matches: frame) { return window }
+                if known, windows.count == 1 { return windows[0] }
                 log.info("pid \(pid, privacy: .public): \(windows.count, privacy: .public) AX windows, none at \(Int(frame.x), privacy: .public),\(Int(frame.y), privacy: .public)")
             } else {
                 log.info("pid \(pid, privacy: .public): AXWindows unavailable (AXError \(status.rawValue, privacy: .public))")
                 noWindowList.insert(pid)
             }
-            for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
-                var single: CFTypeRef?
-                if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single, CFGetTypeID(single) == AXUIElementGetTypeID() {
-                    return (single as! AXUIElement)
+            if known {
+                for name in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+                    var single: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(app, name as CFString, &single) == .success, let single, CFGetTypeID(single) == AXUIElementGetTypeID() {
+                        return (single as! AXUIElement)
+                    }
                 }
             }
         }
@@ -334,19 +345,23 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
             var owner: pid_t = 0
             guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
             var hops = 0
+            var found: AXUIElement?
             while hops < 12 {
                 hops += 1
                 let role = attribute(kAXRoleAttribute, of: element)
-                if role == kAXWindowRole || role == kAXSheetRole { return element }
+                if role == kAXWindowRole || role == kAXSheetRole { found = element; break }
                 var window: CFTypeRef?
                 if AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window) == .success, let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
-                    return (window as! AXUIElement)
+                    found = (window as! AXUIElement)
+                    break
                 }
                 var parent: CFTypeRef?
                 guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parent) == .success, let p = parent, CFGetTypeID(p) == AXUIElementGetTypeID() else { break }
                 element = p as! AXUIElement
             }
-            return element
+            let candidate = found ?? element
+            if known || self.element(candidate, matches: frame) { return candidate }
+            log.info("pid \(pid, privacy: .public): element under window \(Int(frame.x), privacy: .public),\(Int(frame.y), privacy: .public) belongs to another window; ignored")
         }
         return nil
     }
