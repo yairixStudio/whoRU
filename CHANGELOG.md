@@ -4,7 +4,7 @@ All notable changes to whoRU. Dates are the release date; versions follow
 [semantic versioning](https://semver.org), and while the major version is 0 a
 minor bump may change behaviour.
 
-## Unreleased
+## 0.2.1 — 2026-09-08
 
 ### Added
 
@@ -16,6 +16,18 @@ minor bump may change behaviour.
 
 ### Fixed
 
+- System Settings’ own Touch ID sheet (“Privacy & Security is trying to
+  modify your system settings”) was flagged red as *Not a system dialog*,
+  next to evidence saying it was drawn by System Settings and signed by
+  Apple. System Settings draws that sheet in its own process, which was not
+  in the set of trusted dialog processes. It now is, for windows that read
+  like a prompt, and the program scanned is System Settings itself rather
+  than the pane the sheet names, so the panel says *Part of macOS* at once.
+- A prompt-shaped window drawn by Apple software that is not a dialog process
+  (a script’s dialog from osascript, a page’s alert in Safari) is amber, *Not
+  a permission dialog*, naming the program that drew it, instead of red. Red
+  is kept for a third-party program drawing such a window. Neither is
+  scanned.
 - The panel kept a conversation to itself. A scan whose verdict came from the
   cache, made by an agent other than the one currently chosen, showed neither
   the question field nor any answer: questions asked from the suggested chips

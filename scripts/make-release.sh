@@ -2,9 +2,9 @@
 # Builds everything a release needs and leaves it in one folder, ready to
 # upload to GitHub and to link from the download page.
 #
-#   scripts/make-release.sh 0.2.0     → build/whoRU-0.2.0-release/
-#                                          whoRU-0.2.0.pkg
-#                                          whoRU-0.2.0.dmg
+#   scripts/make-release.sh 0.2.1     → build/whoRU-0.2.1-release/
+#                                          whoRU-0.2.1.pkg
+#                                          whoRU-0.2.1.dmg
 #                                          SHA256SUMS.txt
 #
 # This is the only place a release version is written down: it is exported so
@@ -24,7 +24,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-VERSION="${1:-${VERSION:-0.2.0}}"
+VERSION="${1:-${VERSION:-0.2.1}}"
 export VERSION
 
 APP="build/whoRU.app"

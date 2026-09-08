@@ -18,7 +18,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-0.2.0}"
+VERSION="${VERSION:-0.2.1}"
 APP="build/whoRU.app"
 STAGE="build/pkg"
 PKG="build/whoRU-$VERSION.pkg"

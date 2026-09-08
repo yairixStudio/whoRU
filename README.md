@@ -10,7 +10,7 @@ whoRU is a small menu-bar app for macOS. When a permission dialog appears, whoRU
 2. **Is it what it claims to be?** It compares the file’s hash against the publisher’s official release, checks where it was downloaded from, where it lives on disk, and who launched it.
 3. **Does the request make sense?** Optionally, an AI model reads the evidence and explains it in plain language: what the program is, why it probably needs this permission, and what breaks if you say no. You can keep asking questions.
 
-It also answers a question few people think to ask: is this a real macOS dialog at all? A window a program drew itself to look like a prompt gets a red *Not a system dialog* panel naming that program and who signed it. There is one case the window alone cannot settle: any program can ask macOS to show it an alert, and macOS draws that alert with the same process, and the same appearance, it uses for real permission prompts. Nothing in such a window distinguishes it. whoRU falls back on the only thing an impostor cannot fake, the system's own record of the request, and when that record is missing it says so instead of vouching for the dialog.
+It also answers a question few people think to ask: is this a real macOS dialog at all? A window a program drew itself to look like a prompt gets a red *Not a system dialog* panel naming that program and who signed it. A window that Apple software drew for someone else, a script's dialog from osascript or a web page's alert in Safari, gets an amber *Not a permission dialog* panel instead: there is nothing to allow, and the program named is not the one that drew it. There is one case the window alone cannot settle: any program can ask macOS to show it an alert, and macOS draws that alert with the same process, and the same appearance, it uses for real permission prompts. Nothing in such a window distinguishes it. whoRU falls back on the only thing an impostor cannot fake, the system's own record of the request, and when that record is missing it says so instead of vouching for the dialog.
 
 A green verdict is about identity, not behaviour. It says the file is what its signature and the system say it is. A signed and notarized program can still be malicious, or compromised upstream. *Safe to allow* appears only when the file is byte-for-byte the publisher’s official release, and whoRU can check that today for one product, Claude Code. Everything else tops out at *Probably fine*.
 
@@ -23,13 +23,13 @@ whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yo
 
 ## Status
 
-Early and working. Current version 0.2.0, a security release; see the [changelog](CHANGELOG.md). Built in the open from the [design document](docs/DESIGN.md).
+Early and working. Current version 0.2.1; see the [changelog](CHANGELOG.md). Built in the open from the [design document](docs/DESIGN.md).
 
 - [x] Core models, dialog text parser with fixtures, hard-evidence scoring, deterministic headline
 - [x] macOS evidence checks: signature identity and integrity, certificate revocation, Gatekeeper and notarization, SHA-256, official release manifest, download origin, install location, launch chain, persistence, Info.plist declarations, entitlements, timestamps, network connections, optional VirusTotal
 - [x] Requester resolver (dialog name → file on disk, with collision handling)
 - [x] Identity confirmation from the system’s own record of the request, with validation of the running process and a rescan when the system names another program
-- [x] Fake-dialog detection: a permission prompt drawn by anything but a macOS dialog process is flagged red and never scanned
+- [x] Fake-dialog detection: a permission prompt drawn by anything but a macOS dialog process is never scanned; red when a third-party program drew it, amber when Apple software drew it for someone else
 - [x] Command-line scanner (`whoru-cli`)
 - [x] AI analysts: Claude API (streaming, structured output, bounded tools), Claude Code headless, Codex CLI, Gemini CLI, Apple Intelligence, local Ollama-style model; verdict validator that enforces the evidence contract in code
 - [x] AI engines run as their own responsible process with none of whoRU’s permissions; Claude Code is verified before use and limited to `whoru-inspect`
@@ -68,7 +68,7 @@ permission dialog ──▶ Watcher ──▶ Resolver ──▶ Collector ─�
                          └──▶ Identity (the system’s own record) ┘
 ```
 
-- **Watcher** notices a new permission dialog through the window list and the Accessibility API, reads its text and position, and checks who drew it. Only a window owned by one of macOS’s own dialog processes, signed by Apple as part of the platform, counts as a permission dialog. Any other window whose text reads like a permission prompt gets a red *Not a system dialog* panel naming the process that drew it and its signer, and is never scanned. The owner check settles a window a program drew itself; it cannot settle an alert the program asked macOS to draw for it, because that alert is drawn by the same system process as a genuine prompt. Identity, below, is what covers that case.
+- **Watcher** notices a new permission dialog through the window list and the Accessibility API, reads its text and position, and checks who drew it. Only a window owned by one of macOS’s own dialog processes, signed by Apple as part of the platform, counts as a permission dialog; so does an authentication sheet System Settings draws for itself, and there the program scanned is System Settings, not the pane the sheet names. Any other window whose text reads like a permission prompt is never scanned: a red *Not a system dialog* panel names a third-party process that drew it and its signer, and an amber *Not a permission dialog* panel names Apple software that drew it for someone else, such as osascript or Safari. The owner check settles a window a program drew itself; it cannot settle an alert the program asked macOS to draw for it, because that alert is drawn by the same system process as a genuine prompt. Identity, below, is what covers that case.
 - **Resolver** turns the display name in the dialog into a file on disk, a process, and a bundle identifier, with a confidence level. Two programs with the same name are an amber collision until the system says which one asked; the panel lists the others under *Also matches*.
 - **Identity** does not trust the dialog’s wording. Alongside the checks, whoRU reads the system’s own record of the request: `tccd` writes an attribution line to the unified log that names the responsible process with its pid and path. That record confirms the resolver’s answer, corrects it (the scan is redone for the program the system named), or is missing, in which case the panel says *not confirmed*. The record is best effort: on the current macOS 27 beta, `tccd` often writes nothing for a prompted request, so *not confirmed* is common there. An unconfirmed request is itself a finding, because it is the state a program's own alert produces: the panel says the prompt could not be confirmed as genuine, the model is told the same, and under *strict* the scan cannot be green. Once confirmed, the running process itself is validated: its dynamic code signature, and its code directory hash against the file on disk. A mismatch is red, and a verdict formed before that evidence arrived is withdrawn.
 - **Collector** runs independent evidence checks in parallel. Each one is a deterministic command or system API whose raw output you can inspect.
@@ -99,16 +99,16 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install
 
-Signed and notarized builds of 0.2.0 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install). Take `whoRU-0.2.0.pkg` to install it, or `whoRU-0.2.0.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
+Signed and notarized builds of 0.2.1 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install). Take `whoRU-0.2.1.pkg` to install it, or `whoRU-0.2.1.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
 
 Both are signed with an Apple Developer ID and notarized by Apple, so they open without a Gatekeeper warning. A tool that asks you to check what you are about to run should be checkable itself, and every release publishes what you need to do it:
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt          # → whoRU-0.2.0.pkg: OK
-pkgutil --check-signature whoRU-0.2.0.pkg
+shasum -a 256 -c SHA256SUMS.txt          # → whoRU-0.2.1.pkg: OK
+pkgutil --check-signature whoRU-0.2.1.pkg
 #   Notarization: trusted by the Apple notary service
 #   1. Developer ID Installer: yair amsalem (A3W935G59T)
-spctl --assess --type install -vv whoRU-0.2.0.pkg
+spctl --assess --type install -vv whoRU-0.2.1.pkg
 #   source=Notarized Developer ID
 ```
 
@@ -121,7 +121,7 @@ scripts/build-app.sh          # → build/whoRU.app with the CLI inside (signed 
 open build/whoRU.app
 scripts/make-pkg.sh           # → build/whoRU-<version>.pkg: the one file for a download page
 scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applications
-scripts/make-release.sh 0.2.0 # → build/whoRU-0.2.0-release/: both files and their checksums
+scripts/make-release.sh 0.2.1 # → build/whoRU-0.2.1-release/: both files and their checksums
 ```
 
 The package installs the app into Applications, links `whoru` into `/usr/local/bin`, quits an older copy first and opens the new one when it is done, so the setup assistant appears right away. It refuses to run on anything older than macOS 26.
