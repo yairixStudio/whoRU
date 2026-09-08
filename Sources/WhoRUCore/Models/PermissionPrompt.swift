@@ -29,7 +29,8 @@ public enum PermissionService: String, Codable, Sendable, CaseIterable, Hashable
     /// Not TCC: the keychain's own dialog, "X wants to access key “Y” in your
     /// keychain". Who X is matters just as much.
     case keychain = "Keychain"
-    /// Not TCC: the authorization dialog, "X wants to make changes".
+    /// Not TCC: the authorization dialog, "X wants to make changes" or
+    /// "X is trying to install …" (a privileged helper, Apple software).
     case adminRights = "AdminRights"
     case other = "Other"
 

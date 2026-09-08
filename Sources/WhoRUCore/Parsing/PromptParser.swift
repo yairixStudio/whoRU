@@ -61,6 +61,10 @@ public struct PromptParser: Sendable {
         // The keychain's and the authorization dialogs name the program without quotes.
         PromptPattern(locale: "en", regex: #"^(.+?) wants to ((?:access|use) (?:key|your confidential information stored in) [“"].+?[”"] in your keychain)\.?$"#, service: .keychain),
         PromptPattern(locale: "en", regex: #"^(.+?) wants to (make changes)\.?$"#, service: .adminRights),
+        // macOS 27 wording of the same dialog: "Allow administrator access for “X”?" or "… for a script started by “X”?".
+        PromptPattern(locale: "en", regex: #"^Allow (administrator access) for (?:a script started by )?[“"](.+?)[”"]\?$"#, requesterGroup: 2, phraseGroup: 1, service: .adminRights),
+        // Authorization rights with their own wording, e.g. installing a privileged helper or Apple software.
+        PromptPattern(locale: "en", regex: #"^(.+?) is trying to ((?:install|modify|unlock|add|remove|change) .+?)\.?$"#, service: .adminRights),
         // Generic: a quoted name followed by anything, in any language that quotes the requester.
         PromptPattern(locale: "*", regex: #"^[“"״„«](.+?)[”"״“»]\s+(.+)$"#),
     ]

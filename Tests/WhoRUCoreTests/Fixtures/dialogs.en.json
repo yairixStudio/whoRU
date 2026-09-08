@@ -115,6 +115,25 @@
     "expected": { "requester": "Terminal", "service": "adminRights" }
   },
   {
+    "title": "Allow administrator access for a script started by “Terminal”?",
+    "body": "This will allow the script to access and modify your data, files, and settings on this Mac.",
+    "expected": { "requester": "Terminal", "service": "adminRights" }
+  },
+  {
+    "title": "Allow administrator access for “Docker”?",
+    "expected": { "requester": "Docker", "service": "adminRights" }
+  },
+  {
+    "title": "Xcode is trying to install Apple software.",
+    "body": "Touch ID or enter your password to continue with “Xcode”.",
+    "expected": { "requester": "Xcode", "service": "adminRights" }
+  },
+  {
+    "title": "Docker is trying to install a new helper tool.",
+    "body": "Enter your password to allow this.",
+    "expected": { "requester": "Docker", "service": "adminRights" }
+  },
+  {
     "title": "Some notification that is not a permission prompt",
     "expected": null
   }

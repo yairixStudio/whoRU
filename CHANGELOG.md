@@ -6,6 +6,14 @@ minor bump may change behaviour.
 
 ## Unreleased
 
+### Added
+
+- Authorization dialogs worded “X is trying to install …” (a privileged helper,
+  Apple software from Xcode) are explained like “X wants to make changes”.
+  They used to be dropped as password dialogs because their body mentions
+  Touch ID and a password. The macOS 27 wording of the administrator dialog,
+  “Allow administrator access for “X”?”, is recognised as well.
+
 ### Fixed
 
 - The panel kept a conversation to itself. A scan whose verdict came from the
