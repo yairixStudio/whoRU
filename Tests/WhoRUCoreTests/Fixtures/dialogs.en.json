@@ -134,6 +134,11 @@
     "expected": { "requester": "Docker", "service": "adminRights" }
   },
   {
+    "title": "Privacy & Security is trying to modify your system settings.",
+    "body": "Touch ID or enter your password to continue with Privacy & Security.",
+    "expected": { "requester": "Privacy & Security", "service": "adminRights" }
+  },
+  {
     "title": "Some notification that is not a permission prompt",
     "expected": null
   }

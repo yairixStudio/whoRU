@@ -54,9 +54,9 @@ final class ScanSession: Identifiable {
     /// `user` or `system-log`; see `ScanRecord.decisionSource`.
     var decisionSource: String?
 
-    /// Who drew the dialog. Anything but a system dialog process is an
-    /// impostor, and the session is about the impostor, not about the
-    /// program the window names.
+    /// Who drew the dialog. Anything but a system dialog process means the
+    /// window is not a permission dialog, and the session is about the
+    /// program that drew it, not about the program the window names.
     var dialogOrigin: DialogOrigin
 
     /// Whether the system's own record of the request has named the program

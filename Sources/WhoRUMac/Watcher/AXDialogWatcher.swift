@@ -39,6 +39,19 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
 
     static let ignoredOwners: Set<String> = ["Window Server", "Dock", "WindowManager", "Wallpaper", "Notification Center", "Control Center", "Spotlight", "SystemUIServer", "MenuBarAgent"]
 
+    /// Apple apps that draw authentication sheets on their own behalf, in
+    /// their own process: System Settings asking for Touch ID to unlock a
+    /// pane. Such a sheet is a genuine system dialog, and the program asking
+    /// is the app itself, whatever name the sheet uses (“Privacy & Security
+    /// is trying to modify your system settings”). Unlike `bundleIdentifiers`
+    /// these apps have ordinary windows too, so only a window that reads
+    /// like a prompt counts, and an unreadable one is not surfaced.
+    public static let selfPromptingApps: Set<String> = ["com.apple.systempreferences"]
+
+    /// Every owner whose prompts are trusted: the dialog processes and the
+    /// self-prompting apps.
+    private var trustedOwners: Set<String> { bundleIdentifiers.union(Self.selfPromptingApps) }
+
     public init(bundleIdentifiers: Set<String> = ["com.apple.UserNotificationCenter", "com.apple.CoreServicesUIAgent", "com.apple.SecurityAgent"], pollInterval: TimeInterval = 0.1) {
         self.bundleIdentifiers = bundleIdentifiers
         self.pollInterval = pollInterval
@@ -235,10 +248,13 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     }
 
     /// The origin to report for a window: `.system` for a trusted dialog
-    /// process (`isSystemDialogProcess`), else `.unverified` with what is
-    /// known about the owner.
-    public static func origin(isSystem: Bool, bundleID: String?, owner: String, path: String?, signer: String?) -> DialogOrigin {
+    /// process (`isSystemDialogProcess`); `.apple` for any other Apple
+    /// platform process, which is not a dialog process but is not an
+    /// impostor either, only a canvas (osascript, Safari); else
+    /// `.unverified` with what is known about the owner.
+    public static func origin(isSystem: Bool, isPlatform: Bool, bundleID: String?, owner: String, path: String?, signer: String?) -> DialogOrigin {
         if isSystem, let bundleID { return .system(bundleID: bundleID) }
+        if isPlatform { return .apple(owner: owner, path: path) }
         return .unverified(owner: owner, path: path, signer: signer)
     }
 
@@ -258,10 +274,20 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
         let origin = origin(of: info)
         log.info("prompt in \(info.owner, privacy: .public) (pid \(info.pid, privacy: .public)) read in \(Int(Date().timeIntervalSince(started) * 1000), privacy: .public) ms: \(title, privacy: .public)")
         AppLog.shared.info("watcher", "prompt in \(info.owner) (pid \(info.pid), window \(info.number), layer \(info.layer)) read in \(elapsedMs(since: started)) ms: \(title.isEmpty ? "(no text)" : title)")
-        if case .unverified(let owner, let path, let signer) = origin {
+        var subjectPath: String?
+        switch origin {
+        case .unverified(let owner, let path, let signer):
             AppLog.shared.warn("watcher", "window \(info.number) reads like a permission prompt but was drawn by \(owner) (pid \(info.pid), \(path ?? "no path"), signer \(signer ?? "unknown")), not by a system dialog process")
+        case .apple(let owner, let path):
+            AppLog.shared.warn("watcher", "window \(info.number) reads like a permission prompt but was drawn by \(owner) (pid \(info.pid), \(path ?? "no path")), Apple software that is not a dialog process")
+        case .system(let bundleID) where Self.selfPromptingApps.contains(bundleID):
+            // The app asks for itself: the sheet's owner is the program to scan.
+            subjectPath = NSRunningApplication(processIdentifier: info.pid)?.bundleURL?.path ?? ProcessTrust.executablePath(pid: info.pid)
+            AppLog.shared.info("watcher", "window \(info.number) is \(info.owner)'s own authentication sheet; the program asking is \(subjectPath ?? "unknown")")
+        case .system:
+            break
         }
-        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons, nativeWindowID: info.number, origin: origin)))
+        continuation.yield(.appeared(DialogInstance(id: id, pid: info.pid, frame: info.frame, title: title, body: body, buttons: buttons, nativeWindowID: info.number, origin: origin, subjectPath: subjectPath)))
     }
 
     /// Who drew the window, from facts the owner cannot forge: the owner pid
@@ -270,11 +296,14 @@ public final class AXDialogWatcher: DialogWatcher, @unchecked Sendable {
     /// here, once, only for a window that already reads like a prompt.
     private func origin(of info: WindowInfo) -> DialogOrigin {
         let bundle = NSRunningApplication(processIdentifier: info.pid)?.bundleIdentifier
-        let isSystem = Self.isSystemDialogProcess(isPlatform: ProcessTrust.isApplePlatformProcess(pid: info.pid), bundleID: bundle, known: bundleIdentifiers)
+        let isPlatform = ProcessTrust.isApplePlatformProcess(pid: info.pid)
+        let isSystem = Self.isSystemDialogProcess(isPlatform: isPlatform, bundleID: bundle, known: trustedOwners)
         if isSystem { return .system(bundleID: bundle ?? "") }
         let path = ProcessTrust.executablePath(pid: info.pid)
-        let signer = path.map { Self.signerSummary(CodeSignature.inspectNow(path: $0)) }
-        return Self.origin(isSystem: false, bundleID: bundle, owner: info.owner, path: path, signer: signer)
+        // The platform check already settled an Apple owner; the signature
+        // of a non-Apple owner is read here, once.
+        let signer = isPlatform ? "Apple" : path.map { Self.signerSummary(CodeSignature.inspectNow(path: $0)) }
+        return Self.origin(isSystem: false, isPlatform: isPlatform, bundleID: bundle, owner: info.owner, path: path, signer: signer)
     }
 
     /// Current bounds of one window, cheap enough to call every frame.

@@ -191,8 +191,25 @@ private let attributedChrome = AttributedIdentity(pid: 10, binaryPath: "/Applica
         #expect(HeadlineComposer().headline(for: result, subject: nil, prompt: prompt, locale: "en").title == "Do not allow")
     }
 
+    @Test func windowDrawnByAppleSoftwareIsAmberWithItsOwnTitle() {
+        // osascript, Safari: not a permission dialog, but nobody to call malicious.
+        let result = HardScoreResult(score: .amber, reasons: [ScoreReason(code: "dialog.apple", params: ["owner": "osascript", "signer": ", signed by Apple"])])
+        let en = HeadlineComposer().headline(for: result, subject: nil, prompt: prompt, locale: "en")
+        #expect(en.title == "Not a permission dialog")
+        #expect(en.sentence.hasPrefix("This window is not a macOS permission dialog. It was drawn by osascript, Apple software"))
+        #expect(!en.sentence.contains("signed by"), "the signer clause is for impostors; here Apple is the point")
+        let he = HeadlineComposer().headline(for: result, subject: nil, prompt: prompt, locale: "he")
+        #expect(he.title == "לא דיאלוג הרשאות")
+        #expect(he.sentence.contains("osascript"))
+        let presentation = VerdictPresentation.forHardScore(result, locale: "en")
+        #expect(presentation.title == "Not a permission dialog")
+        #expect(presentation.color == "orange")
+        // Other amber reasons are untouched.
+        #expect(VerdictPresentation.forHardScore(HardScoreResult(score: .amber, reasons: [ScoreReason(code: "signer.unknown")]), locale: "en").title == "Worth a look")
+    }
+
     @Test func newStringsExistInBothLanguages() {
-        for key in ["headline.notSystemDialog", "reason.dialog.fake", "reason.dialog.fake.signer"] {
+        for key in ["headline.notSystemDialog", "headline.notPermissionDialog", "reason.dialog.fake", "reason.dialog.fake.signer", "reason.dialog.apple"] {
             for locale in ["en", "he"] {
                 #expect(L10n.tables[locale]?[key] != nil, "missing \(locale) string for \(key)")
             }
@@ -201,12 +218,19 @@ private let attributedChrome = AttributedIdentity(pid: 10, binaryPath: "/Applica
     }
 
     @Test func dialogOriginRoundTripsThroughJSON() throws {
-        let origins: [DialogOrigin] = [.system(bundleID: "com.apple.UserNotificationCenter"), .unverified(owner: "osascript", path: "/usr/bin/osascript", signer: "Apple")]
+        let origins: [DialogOrigin] = [
+            .system(bundleID: "com.apple.UserNotificationCenter"),
+            .apple(owner: "osascript", path: "/usr/bin/osascript"),
+            .unverified(owner: "Evil", path: "/tmp/evil", signer: nil),
+        ]
         let data = try JSONEncoder().encode(origins)
         #expect(try JSONDecoder().decode([DialogOrigin].self, from: data) == origins)
         #expect(origins[0].isSystem)
         #expect(!origins[1].isSystem)
-        #expect(DialogInstance(id: "1", pid: 1, frame: Rect(x: 0, y: 0, width: 1, height: 1), title: "t").origin == .system(bundleID: ""))
+        #expect(!origins[2].isSystem)
+        let plain = DialogInstance(id: "1", pid: 1, frame: Rect(x: 0, y: 0, width: 1, height: 1), title: "t")
+        #expect(plain.origin == .system(bundleID: ""))
+        #expect(plain.subjectPath == nil)
     }
 }
 

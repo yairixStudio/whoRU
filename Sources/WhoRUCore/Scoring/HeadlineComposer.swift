@@ -37,6 +37,11 @@ public struct HeadlineComposer: Sendable {
             if first?.code == "unresolved" {
                 title = L10n.text("headline.unresolved", locale: locale)
                 sentence = L10n.text("reason.unresolved", locale: locale, params)
+            } else if first?.code == "dialog.apple" {
+                // Apple software drew a window that is not a permission
+                // dialog: nothing to allow, and nobody to call malicious.
+                title = L10n.text("headline.notPermissionDialog", locale: locale)
+                sentence = L10n.text("reason.dialog.apple", locale: locale, params)
             } else {
                 title = L10n.text("headline.worthALook", locale: locale)
                 sentence = L10n.text("reason.\(first?.code ?? "signer.unknown")", locale: locale, params)
@@ -115,9 +120,14 @@ public struct VerdictPresentation: Sendable, Hashable {
                 ? forVerdict(.legitimate, locale: locale)
                 : forVerdict(.probablyLegitimate, locale: locale)
         case .amber:
-            return result.reasons.first?.code == "unresolved"
-                ? forVerdict(.unknown, locale: locale)
-                : forVerdict(.suspicious, locale: locale)
+            switch result.reasons.first?.code {
+            case "unresolved":
+                return forVerdict(.unknown, locale: locale)
+            case "dialog.apple":
+                return VerdictPresentation(title: L10n.text("headline.notPermissionDialog", locale: locale), symbol: "exclamationmark.shield.fill", color: "orange")
+            default:
+                return forVerdict(.suspicious, locale: locale)
+            }
         case .red:
             if result.reasons.first?.code == "dialog.fake" {
                 return VerdictPresentation(title: L10n.text("headline.notSystemDialog", locale: locale), symbol: "xmark.shield.fill", color: "red")

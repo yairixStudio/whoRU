@@ -215,11 +215,21 @@ final class AppModel {
         sessions.append(session)
         lastSession = session
         // A window that reads like a prompt but was not drawn by a system
-        // dialog process is an impostor. The pipeline is not run: scanning the
-        // program the window names would put a green badge next to a fake.
-        if case .unverified(let owner, let path, let signer) = dialog.origin {
-            markFakeDialog(session, owner: owner, path: path, signer: signer)
+        // dialog process is not a permission dialog. The pipeline is not run:
+        // scanning the program the window names would put a green badge next
+        // to a fake. A third-party owner is an impostor, red. An Apple owner
+        // (osascript, Safari) is a canvas someone else drew on: amber, with
+        // the owner named, since there is nothing to allow and nobody to call
+        // malicious.
+        switch dialog.origin {
+        case .unverified(let owner, let path, let signer):
+            markNotADialog(session, score: .red, reason: "dialog.fake", owner: owner, path: path, signer: signer)
             return session
+        case .apple(let owner, let path):
+            markNotADialog(session, score: .amber, reason: "dialog.apple", owner: owner, path: path, signer: "Apple")
+            return session
+        case .system:
+            break
         }
         // The same program asking for the same thing again within a minute
         // (a cascade of prompts, or a re-shown dialog) reuses the scan in flight
@@ -231,7 +241,11 @@ final class AppModel {
             session.mirror(twin)
             return session
         }
-        if parser.parse(title: dialog.title) != nil {
+        if let path = dialog.subjectPath {
+            // The window settled who is asking (an app's own authentication
+            // sheet): scan that program, not the name in the text.
+            run(session, presetSubject: Self.subject(atPath: path, strategy: "window_owner"))
+        } else if parser.parse(title: dialog.title) != nil {
             run(session, presetSubject: nil)
         } else {
             // Unknown wording: show the raw text and let the user pick a file.
@@ -244,13 +258,10 @@ final class AppModel {
 
     @discardableResult
     func startManualScan(path: String, service: PermissionService) -> ScanSession {
-        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
-        let bundle = BundleInfo.read(bundlePath: standardized) ?? BundleInfo.read(containing: standardized)
-        let name = bundle?.displayName ?? (standardized as NSString).lastPathComponent
+        let subject = Self.subject(atPath: path, strategy: "manual_path")
+        let name = subject.displayName
         let phrase = PromptParser.serviceKeywords.first { $0.0 == service }?.1.first.map { "access \($0)" } ?? "access \(service.shortName)"
         let prompt = PermissionPrompt(title: "“\(name)” would like to \(phrase).", requesterName: name, service: service, requestPhrase: phrase, locale: Locale.preferredLanguages.first ?? "en")
-        let subject = Subject(path: standardized, bundleID: bundle?.identifier, displayName: name, version: bundle?.shortVersion, bundlePath: bundle?.bundlePath,
-                              resolver: ResolverOutcome(strategy: "manual_path", confidence: .high))
         let session = ScanSession(id: UUID().uuidString, dialog: nil, prompt: prompt, rawTitle: prompt.title)
         session.isManual = true
         sessions.append(session)
@@ -259,23 +270,35 @@ final class AppModel {
         return session
     }
 
-    /// Scores a window that only pretends to be a permission dialog: red, no
-    /// pipeline, no model. The panel names the program that drew it.
-    private func markFakeDialog(_ session: ScanSession, owner: String, path: String?, signer: String?) {
+    /// A subject settled without the resolver: a path the user picked, or
+    /// the owner of a window that asks for itself.
+    static func subject(atPath path: String, strategy: String) -> Subject {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        let bundle = BundleInfo.read(bundlePath: standardized) ?? BundleInfo.read(containing: standardized)
+        let name = bundle?.displayName ?? (standardized as NSString).lastPathComponent
+        return Subject(path: standardized, bundleID: bundle?.identifier, displayName: name, version: bundle?.shortVersion, bundlePath: bundle?.bundlePath,
+                       resolver: ResolverOutcome(strategy: strategy, confidence: .high))
+    }
+
+    /// Scores a window that is not a permission dialog: no pipeline, no
+    /// model, the verdict on screen at once. Red with `dialog.fake` for an
+    /// impostor, amber with `dialog.apple` for a window Apple software drew
+    /// for someone else. The panel names the program that drew it.
+    private func markNotADialog(_ session: ScanSession, score: HardScore, reason: String, owner: String, path: String?, signer: String?) {
         let prompt = session.prompt
         let signerClause = signer.map { L10n.text("reason.dialog.fake.signer", locale: prompt.locale, ["signer": $0]) } ?? ""
-        let hard = HardScoreResult(score: .red, reasons: [ScoreReason(code: "dialog.fake", params: ["owner": owner, "signer": signerClause])])
+        let hard = HardScoreResult(score: score, reasons: [ScoreReason(code: reason, params: ["owner": owner, "signer": signerClause])])
         session.hardScore = hard
         session.headline = HeadlineComposer().headline(for: hard, subject: nil, prompt: prompt, locale: prompt.locale)
         session.evidence = [
-            EvidenceItem(key: "window.owner", status: .fail, weight: .decisive, summary: path ?? owner,
+            EvidenceItem(key: "window.owner", status: score == .red ? .fail : .warn, weight: .decisive, summary: path ?? owner,
                          raw: "owner: \(owner)\npid: \(session.dialog?.pid ?? 0)\nexecutable: \(path ?? "unknown")", method: "CGWindowListCopyWindowInfo, proc_pidpath"),
             EvidenceItem(key: "window.signer", status: signer == nil ? .warn : .info, weight: .high, summary: signer ?? "unknown",
-                         raw: signer, method: "SecStaticCodeCheckValidity, SecCodeCopySigningInformation"),
+                         raw: signer, method: "SecCodeCheckValidity (anchor apple), SecStaticCodeCheckValidity, SecCodeCopySigningInformation"),
         ]
         session.analysis = .skipped("not a system dialog")
         session.identity = .unconfirmed
-        AppLog.shared.warn("app", "fake dialog: “\(prompt.requesterName)” \(prompt.service.shortName) drawn by \(owner) (\(path ?? "no path"), \(signer ?? "unknown signer")); no scan run")
+        AppLog.shared.warn("app", "\(score == .red ? "fake dialog" : "not a permission dialog"): “\(prompt.requesterName)” \(prompt.service.shortName) drawn by \(owner) (\(path ?? "no path"), \(signer ?? "unknown signer")); no scan run")
     }
 
     private func run(_ session: ScanSession, presetSubject: Subject?, attribution known: AttributedIdentity? = nil) {

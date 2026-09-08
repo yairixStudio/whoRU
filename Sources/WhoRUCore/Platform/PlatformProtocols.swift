@@ -61,6 +61,11 @@ public protocol ApplicationFinder: Sendable {
 public enum DialogOrigin: Sendable, Hashable, Codable {
     /// Drawn by a platform process known to show permission prompts.
     case system(bundleID: String)
+    /// Drawn by Apple platform code that is not one of the dialog processes:
+    /// osascript showing a script's dialog, Safari showing a page's alert,
+    /// Script Editor. The window is genuinely not a permission dialog, but
+    /// its owner is a program anyone may draw with, not an impostor itself.
+    case apple(owner: String, path: String?)
     /// Drawn by something else: the owner's name, its executable and a
     /// summary of who signed it, for the panel to show.
     case unverified(owner: String, path: String?, signer: String?)
@@ -83,8 +88,14 @@ public struct DialogInstance: Sendable, Hashable {
     /// follow the window directly at display rate.
     public var nativeWindowID: Int?
     public var origin: DialogOrigin
+    /// The program the dialog is about when the window itself settles it.
+    /// Some Apple apps draw authentication sheets only on their own behalf
+    /// (System Settings asking to unlock a pane), so the window's owner is
+    /// the program asking, whatever name the text uses. Nil when the text
+    /// names the program, which is the usual case.
+    public var subjectPath: String?
 
-    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = [], nativeWindowID: Int? = nil, origin: DialogOrigin = .system(bundleID: "")) {
+    public init(id: String, pid: Int32, frame: Rect, title: String, body: String? = nil, buttons: [String] = [], nativeWindowID: Int? = nil, origin: DialogOrigin = .system(bundleID: ""), subjectPath: String? = nil) {
         self.id = id
         self.pid = pid
         self.frame = frame
@@ -93,6 +104,7 @@ public struct DialogInstance: Sendable, Hashable {
         self.buttons = buttons
         self.nativeWindowID = nativeWindowID
         self.origin = origin
+        self.subjectPath = subjectPath
     }
 }
 

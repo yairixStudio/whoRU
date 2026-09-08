@@ -105,8 +105,11 @@ struct CompanionView: View {
     /// The program the window belongs to. For an impostor that is the process
     /// that drew the window, not the name the window claims.
     private var fakeOwner: (owner: String, path: String?, signer: String?)? {
-        if case .unverified(let owner, let path, let signer) = session.dialogOrigin { return (owner, path, signer) }
-        return nil
+        switch session.dialogOrigin {
+        case .unverified(let owner, let path, let signer): (owner, path, signer)
+        case .apple(let owner, let path): (owner, path, "Apple")
+        case .system: nil
+        }
     }
 
     private var identity: some View {
