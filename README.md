@@ -99,7 +99,7 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install
 
-Signed and notarized builds of 0.2.1 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://whoru-yairix-0506.wix-site-host.com/#install). Take `whoRU-0.2.1.pkg` to install it, or `whoRU-0.2.1.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
+Signed and notarized builds of 0.2.1 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://askwhoru.com/#install). Take `whoRU-0.2.1.pkg` to install it, or `whoRU-0.2.1.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
 
 Both are signed with an Apple Developer ID and notarized by Apple, so they open without a Gatekeeper warning. A tool that asks you to check what you are about to run should be checkable itself, and every release publishes what you need to do it:
 
