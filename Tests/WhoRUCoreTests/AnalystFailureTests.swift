@@ -50,11 +50,36 @@ private func output(stdout: String, stderr: String = "", status: Int32 = 1) -> C
         #expect(detail.contains("Segmentation fault"))
     }
 
-    @Test func commandLineAgentsNameTheirLimit() {
-        let limit = CLIAgent.usageLimit(in: output(stdout: "", stderr: "working…\nERROR: You exceeded your current quota, please check your plan.\n"))
-        guard case .usageLimit(let line) = limit else { Issue.record("expected a usage limit"); return }
-        #expect(line == "ERROR: You exceeded your current quota, please check your plan.")
-        #expect(CLIAgent.usageLimit(in: output(stdout: "", stderr: "syntax error")) == nil)
+    @Test func codexErrorLineIsReadAsJSON() {
+        let stderr = """
+        user
+        reply with the word done
+        warning: Model metadata for `gpt-5-codex` not found.
+        ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'gpt-5-codex' model is not supported when using Codex with a ChatGPT account."}}
+        """
+        let error = CLIAgent.failure(from: output(stdout: "", stderr: stderr), agent: "codex", name: "Codex")
+        guard case .agentMessage(let message) = error else { Issue.record("expected the CLI's message, got \(error)"); return }
+        #expect(message == "The 'gpt-5-codex' model is not supported when using Codex with a ChatGPT account.")
+        let limited = CLIAgent.failure(from: output(stdout: "", stderr: #"ERROR: {"type":"error","status":429,"error":{"message":"You've hit your usage limit."}}"#), agent: "codex", name: "Codex")
+        guard case .usageLimit = limited else { Issue.record("expected a usage limit, got \(limited)"); return }
+    }
+
+    /// The prompt is echoed to stderr, and it names the program under review.
+    /// "QuotaHarvest" and a login item in the evidence are not a quota error
+    /// or a lapsed sign-in.
+    @Test func echoedPromptIsNotMistakenForAnError() {
+        let echoed = """
+        user
+        Evidence bundle:
+            "path" : "~/Programs/claude-usage-widget/QuotaHarvest.app",
+            "summary" : "starts at login: login item, rate limit exceeded",
+        Answer from the evidence bundle only. Do not run commands and do not read files.
+        \(String(repeating: "Answer from the evidence bundle only.\n", count: 6))
+        """
+        let error = CLIAgent.failure(from: output(stdout: "", stderr: echoed), agent: "codex", name: "Codex")
+        guard case .invalidResponse = error else { Issue.record("the echoed prompt was read as \(error)"); return }
+        let signedOut = CLIAgent.failure(from: output(stdout: "", stderr: "Error: not logged in. Run codex login."), agent: "codex", name: "Codex")
+        guard case .notConfigured = signedOut else { Issue.record("expected sign-in, got \(signedOut)"); return }
     }
 
     @Test func userMessagesAreSentences() {

@@ -49,13 +49,35 @@ enum CLIAgent {
         return env
     }
 
-    /// A usage or rate limit named in a failed run's output, as the tool's
-    /// own last line about it, so the panel can say which limit it was.
-    static func usageLimit(in output: CommandOutput) -> AnalystError? {
-        let markers = ["rate limit", "usage limit", "quota", "too many requests", "resource_exhausted"]
-        let lines = (output.stderr + "\n" + output.stdout).split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let line = lines.last(where: { line in markers.contains { line.lowercased().contains($0) } }) else { return nil }
-        return .usageLimit(String(line.prefix(300)))
+    /// Why a run failed, in the tool's words. Only the last lines of stderr
+    /// are read: both tools echo the prompt, and the prompt carries text the
+    /// program under review chose (its name, its descriptions) as well as
+    /// evidence such as "login item", none of which may pass for an error.
+    /// Bundle lines are indented JSON, so none of them starts with "ERROR:".
+    static func failure(from output: CommandOutput, agent: String, name: String) -> AnalystError {
+        let tail = output.stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.suffix(6)
+        let limitMarkers = ["rate limit", "usage limit", "exceeded your current quota", "quota exceeded", "too many requests", "resource_exhausted"]
+        let signInMarkers = ["not logged in", "not authenticated", "unauthorized", "please log in", "login required"]
+        func classify(_ text: String, status: Int? = nil) -> AnalystError {
+            let lower = text.lowercased()
+            if status == 401 || signInMarkers.contains(where: lower.contains) {
+                return .notConfigured("\(name) is not signed in. Sign in from Settings → AI.")
+            }
+            if status == 429 || limitMarkers.contains(where: lower.contains) { return .usageLimit(String(text.prefix(300))) }
+            return .agentMessage(String(text.prefix(300)))
+        }
+        // Codex: `ERROR: {"type":"error","status":400,"error":{"message":"…"}}`.
+        if let line = tail.last(where: { $0.lowercased().hasPrefix("error:") }) {
+            let body = line.dropFirst("error:".count).trimmingCharacters(in: .whitespaces)
+            if let json = try? JSONValue.parse(body), let message = json["error"]?["message"]?.stringValue ?? json["message"]?.stringValue {
+                return classify(message, status: json["status"]?.intValue ?? json["error"]?["code"]?.intValue)
+            }
+            return classify(body)
+        }
+        if let line = tail.last(where: { line in (limitMarkers + signInMarkers).contains(where: line.lowercased().contains) }) {
+            return classify(line)
+        }
+        return .invalidResponse("\(agent) exited \(output.status): \(tail.joined(separator: " ").suffix(300))")
     }
 
     static func decodeVerdict(from text: String) throws -> Verdict {
@@ -138,12 +160,7 @@ public struct CodexAnalyst: Analyst {
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory, disclaimResponsibility: true)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else {
-            let text = (output.stdout + output.stderr).lowercased()
-            if text.contains("login") || text.contains("not authenticated") || text.contains("api key") || text.contains("unauthorized") {
-                throw AnalystError.notConfigured("Codex is not signed in. Sign in from Settings → AI.")
-            }
-            if let limit = CLIAgent.usageLimit(in: output) { throw limit }
-            throw AnalystError.invalidResponse("codex exited \(output.status): \(output.stderr.suffix(300))")
+            throw CLIAgent.failure(from: output, agent: "codex", name: "Codex")
         }
         if let answer = try? String(contentsOf: answerFile, encoding: .utf8), !answer.isEmpty { return answer }
         return output.stdout
@@ -199,12 +216,7 @@ public struct GeminiAnalyst: Analyst {
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: CLIAgent.environment, workingDirectory: CLIAgent.scratchDirectory, disclaimResponsibility: true)
         if output.timedOut { throw AnalystError.timeout }
         guard output.status == 0 else {
-            let text = (output.stdout + output.stderr).lowercased()
-            if text.contains("login") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
-                throw AnalystError.notConfigured("Gemini CLI is not signed in. Sign in from Settings → AI.")
-            }
-            if let limit = CLIAgent.usageLimit(in: output) { throw limit }
-            throw AnalystError.invalidResponse("gemini exited \(output.status): \(output.stderr.suffix(300))")
+            throw CLIAgent.failure(from: output, agent: "gemini", name: "Gemini CLI")
         }
         // Newer versions can wrap the answer as {"response": "..."}; older ones print it directly.
         if let json = try? JSONValue.parse(output.stdout), let response = json["response"]?.stringValue { return response }
