@@ -33,6 +33,16 @@ final class ScanSession: Identifiable {
     var partialHeadline: String?
     var verdict: Verdict?
     var analysis: AnalysisState = .idle
+    /// Set when the agent failed and the fallback was asked: who failed and
+    /// why, and who was asked instead, so an answer from the fallback never
+    /// hides that the chosen agent did not work.
+    var fallback: FallbackNote?
+
+    struct FallbackNote: Equatable {
+        var failed: String
+        var reason: String
+        var next: String
+    }
     var toolActivity: String?
     var record: ScanRecord?
     var fromCache = false
@@ -132,6 +142,7 @@ final class ScanSession: Identifiable {
         partialHeadline = nil
         verdict = nil
         analysis = .idle
+        fallback = nil
         toolActivity = nil
         record = nil
         fromCache = false
@@ -170,6 +181,7 @@ final class ScanSession: Identifiable {
         headline = other.headline
         verdict = other.verdict
         analysis = other.analysis
+        fallback = other.fallback
         record = other.record
         identity = other.identity
         mirrorTask?.cancel()
@@ -185,6 +197,7 @@ final class ScanSession: Identifiable {
                     self.partialHeadline = other.partialHeadline
                     self.verdict = other.verdict
                     self.analysis = other.analysis
+                    self.fallback = other.fallback
                     self.record = other.record
                     self.identity = other.identity
                     self.identityCorrected = other.identityCorrected
@@ -236,6 +249,9 @@ final class ScanSession: Identifiable {
             toolActivity = nil
         case .analysisSkipped(let reason):
             analysis = .skipped(reason)
+        case .fallback(let from, let reason, let to):
+            fallback = FallbackNote(failed: from, reason: reason, next: to)
+            toolActivity = "Trying \(to)…"
         case .analysisFailed(let error):
             analysis = .failed(error)
             toolActivity = nil

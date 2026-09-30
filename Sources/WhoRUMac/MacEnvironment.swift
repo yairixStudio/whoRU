@@ -72,6 +72,16 @@ public enum MacEnvironment {
         }
     }
 
+    /// The agent asked when the chosen one fails, built and verified exactly
+    /// like a chosen agent, never by automatic detection. In local-only mode
+    /// only an on-device fallback is built.
+    public static func fallbackAnalyst(settings: Settings, secrets: any SecretStore) async -> (any Analyst)? {
+        let engine = settings.fallbackEngine
+        guard engine != .none, engine != .auto else { return nil }
+        if settings.localOnly, !engine.isOnDevice { return nil }
+        return await explicitAnalyst(settings: settings.promotingFallback, secrets: secrets)
+    }
+
     private static func explicitAnalyst(settings: Settings, secrets: any SecretStore) async -> (any Analyst)? {
         switch settings.engine {
         case .claudeAPI:
@@ -113,10 +123,12 @@ public enum MacEnvironment {
         let secrets = secrets()
         let processes = MacProcessInspector()
         let analyst = await analyst(settings: settings, secrets: secrets)
+        let fallback = analyst == nil ? nil : await fallbackAnalyst(settings: settings, secrets: secrets)
         return ScanEnvironment(
             resolver: RequesterResolver(processes: processes, finder: MacApplicationFinder()),
             collector: Collector(checks: checks()),
             analyst: analyst,
+            fallbackAnalyst: fallback,
             toolHandlers: { _, evidence in
                 MacTools.handlers(processes: processes) + CoreTools.handlers(publishers: publishers, secrets: secrets, settings: settings, evidence: evidence)
             },

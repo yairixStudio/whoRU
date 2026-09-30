@@ -36,7 +36,7 @@ struct CLI {
         whoru-cli – who is really asking?
 
         usage:
-          whoru-cli scan <path | requester name> [--service <name>] [--json] [--no-ai] [--no-store] [--engine auto|claudeCode|claudeAPI|codex|gemini|local] [--model <name>] [--depth fast|balanced|deep] [--locale <tag>] [--slow]
+          whoru-cli scan <path | requester name> [--service <name>] [--json] [--no-ai] [--no-store] [--engine auto|claudeCode|claudeAPI|codex|gemini|local] [--model <name>] [--fallback <engine|none>] [--fallback-model <name>] [--depth fast|balanced|deep] [--locale <tag>] [--slow]
           whoru-cli parse "<dialog title>" ["<dialog body>"]
           whoru-cli resolve "<requester name>"
           whoru-cli history [--limit N]
@@ -72,6 +72,8 @@ struct CLI {
         settings.askModelAutomatically = true
         if let engine = options.value("--engine").flatMap(EngineChoice.init(rawValue:)) { settings.engine = engine }
         if let modelName = options.value("--model") { settings.engineModels[settings.engine.rawValue] = modelName }
+        if let fallback = options.value("--fallback").flatMap(EngineChoice.init(rawValue:)) { settings.fallbackEngine = fallback }
+        if let modelName = options.value("--fallback-model") { settings.fallbackModel = modelName }
         if let depth = options.value("--depth").flatMap(AnalysisDepth.init(rawValue:)) { settings.depth = depth }
         let store: (any ScanStore)? = noStore ? nil : JSONFileScanStore(paths: paths)
         let environment = await MacEnvironment.environment(settings: settings, store: store, locale: locale)
@@ -152,8 +154,11 @@ struct CLI {
             out.line("\(t)  \(Output.red("rejected")) the model contradicted hard evidence: \(reason)")
         case .analysisSkipped(let reason):
             out.line("\(t)  \(Output.dim("model"))    skipped: \(reason)")
+        case .fallback(let from, let reason, let to):
+            out.line("\(t)  \(Output.red("model"))    \(from) failed: \(reason)")
+            out.line("\(t)  \(Output.dim("model"))    falling back to \(to)")
         case .analysisFailed(let error):
-            out.line("\(t)  \(Output.red("model"))    failed: \(error)")
+            out.line("\(t)  \(Output.red("model"))    failed: \(error.replacingOccurrences(of: "\n", with: "\n                  "))")
         case .finished(let record):
             if record.costUSD > 0 { out.line("\(t)  \(Output.dim("cost"))     $\(String(format: "%.4f", record.costUSD)) · \(record.inputTokens) in / \(record.outputTokens) out · \(record.model ?? "")") }
             out.line("\(t)  \(Output.dim("done"))     \(record.id.uuidString.lowercased())")

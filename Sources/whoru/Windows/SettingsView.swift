@@ -231,7 +231,10 @@ private struct AITab: View {
                 if engine == .appleIntelligence {
                     LabeledContent("Model", value: "On-device model")
                 } else if EngineChoice.commandLineAgents.contains(engine) {
-                    ModelPicker(engine: engine, settings: $model.settings)
+                    ModelPicker(engine: engine, stored: Binding(
+                        get: { model.settings.engineModels[engine.rawValue] ?? "" },
+                        set: { model.settings.engineModels[engine.rawValue] = $0 }
+                    ))
                 }
                 Text("Agents run as separate processes without whoRU's permissions; only whoru-inspect, limited to the program under review, is available to them.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -251,6 +254,22 @@ private struct AITab: View {
                 }
             }
 
+            Section {
+                Picker("If it fails, ask", selection: $model.settings.fallbackEngine) {
+                    Text("None").tag(EngineChoice.none)
+                    ForEach(fallbackAgents, id: \.self) { choice in
+                        Text(choice.displayName).tag(choice)
+                    }
+                }
+                if EngineChoice.commandLineAgents.contains(fallbackEngine) {
+                    ModelPicker(engine: fallbackEngine, title: "Fallback model", stored: $model.settings.fallbackModel)
+                }
+            } header: {
+                Text("Fallback")
+            } footer: {
+                Text(fallbackFooter)
+            }
+
             Section(model.settings.localOnly ? "On-device" : "Agents on this Mac") {
                 ForEach(visibleAgents) { agent in
                     LabeledContent {
@@ -268,6 +287,10 @@ private struct AITab: View {
         .formStyle(.grouped)
         .task { await detect() }
         .onChange(of: model.settings.engine) { _, _ in Task { await model.refreshEngineDescription() } }
+        .onChange(of: model.settings.fallbackEngine) { _, new in
+            // The same agent as a fallback is only useful with another model.
+            model.settings.fallbackModel = new == engine ? new.fallbackModel(whenPrimaryRuns: model.settings.model(for: new)) : ""
+        }
         // Coming back from Terminal after an install: look again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await detect() }
@@ -286,6 +309,29 @@ private struct AITab: View {
         return usable
     }
 
+    private var fallbackEngine: EngineChoice { model.settings.fallbackEngine }
+
+    /// Usable agents, the chosen one included (with another model), and the
+    /// current fallback kept visible if it just became unavailable.
+    private var fallbackAgents: [EngineChoice] {
+        let usable = visibleAgents.filter(\.isUsable).map(\.engine)
+        if fallbackEngine != .none, !usable.contains(fallbackEngine) { return usable + [fallbackEngine] }
+        return usable
+    }
+
+    private var fallbackFooter: String {
+        if fallbackEngine == .none {
+            return "When the agent fails (a usage limit, a lapsed sign-in, no answer in time), whoRU can ask another agent, or the same one with another model, once. The panel says which one answered and why."
+        }
+        if fallbackEngine == engine, model.settings.resolvedFallbackModel == model.settings.model(for: engine) {
+            return "That is the agent and model above, so it would fail the same way. Pick another model."
+        }
+        if model.settings.localOnly, !fallbackEngine.isOnDevice {
+            return "Local-only mode is on, so a cloud fallback is not asked."
+        }
+        return "Asked once when the agent above fails. The panel says which one answered and why."
+    }
+
     private func detect() async {
         agents = await AgentStatus.detectAll(settings: model.settings)
         // "Automatic" is how the app starts; the picker shows a concrete agent.
@@ -300,17 +346,19 @@ private struct AITab: View {
     }
 }
 
+/// The model for one agent. `stored` is the raw setting: empty for the
+/// agent's first suggestion, "custom" while a name is being typed.
 private struct ModelPicker: View {
     let engine: EngineChoice
-    @Binding var settings: WhoRUCore.Settings
+    var title: LocalizedStringKey = "Model"
+    @Binding var stored: String
 
-    private var stored: String { settings.engineModels[engine.rawValue] ?? "" }
     private var isCustom: Bool { !stored.isEmpty && !engine.suggestedModels.contains(stored) }
 
     var body: some View {
-        Picker("Model", selection: Binding(
-            get: { isCustom ? "custom" : settings.model(for: engine) },
-            set: { value in settings.engineModels[engine.rawValue] = value == "custom" ? "custom" : value }
+        Picker(title, selection: Binding(
+            get: { isCustom ? "custom" : (stored.isEmpty ? engine.defaultModel : stored) },
+            set: { stored = $0 }
         )) {
             ForEach(engine.suggestedModels, id: \.self) { name in
                 Text(engine.modelDisplayName(name)).tag(name)
@@ -320,7 +368,7 @@ private struct ModelPicker: View {
         if isCustom {
             TextField("Model name", text: Binding(
                 get: { stored == "custom" ? "" : stored },
-                set: { settings.engineModels[engine.rawValue] = $0.isEmpty ? "custom" : $0 }
+                set: { stored = $0.isEmpty ? "custom" : $0 }
             ))
             .textFieldStyle(.roundedBorder)
         }

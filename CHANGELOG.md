@@ -4,6 +4,35 @@ All notable changes to whoRU. Dates are the release date; versions follow
 [semantic versioning](https://semver.org), and while the major version is 0 a
 minor bump may change behaviour.
 
+## Unreleased
+
+### Added
+
+- A fallback agent (Settings → AI → *If it fails, ask*). When the agent fails
+  (a usage limit, a lapsed sign-in, no answer in time, an unreadable answer)
+  whoRU asks the fallback once. It can be another agent or the same one with
+  another model, such as Claude Code with Sonnet 5 when Opus 5 is out of
+  quota. It is built and verified like a chosen agent, and local-only mode and
+  the monthly budget apply to it. The panel says which agent failed and why,
+  and that the fallback answered. `whoru-cli scan` takes `--fallback <engine>`
+  and `--fallback-model <name>`.
+
+### Fixed
+
+- A failed agent showed only *AI unavailable · evidence only*, with no reason.
+  Claude Code reports an API failure, such as *You've reached your Fable
+  limit*, as JSON on stdout with an empty stderr, and whoRU only read stderr.
+  It now reads the CLI's own message, classifies usage limits and sign-in
+  problems, and the panel shows that message, which agent and model it came
+  from, and a link to Settings. Codex and Gemini name their quota errors the
+  same way.
+- The log's `start · model` line printed the analysis-depth model rather than
+  the model the agent actually ran, so a Claude Code scan on Fable 5.1 was
+  logged as Opus 5.
+- A conversation with Claude Code continued on the CLI's default model instead
+  of the model that produced the verdict. It now passes that model when it
+  resumes the session.
+
 ## 0.2.1 — 2026-09-08
 
 ### Added

@@ -11,6 +11,10 @@ public enum ScanEvent: Sendable {
     case verdict(Verdict)
     case verdictRejected(reason: String)
     case analysisSkipped(reason: String)
+    /// The agent failed and the fallback is being asked. Labels read like
+    /// "Claude Code · Claude Fable 5.1"; `reason` is the failure in a sentence.
+    case fallback(from: String, reason: String, to: String)
+    /// Why no verdict came, in a sentence for the panel (the log has the details).
     case analysisFailed(String)
     case finished(ScanRecord)
 }
@@ -21,6 +25,8 @@ public struct ScanEnvironment: Sendable {
     public var resolver: RequesterResolver
     public var collector: Collector
     public var analyst: (any Analyst)?
+    /// Asked once when the analyst fails; see `Settings.fallbackEngine`.
+    public var fallbackAnalyst: (any Analyst)?
     public var toolHandlers: @Sendable (Subject?, [EvidenceItem]) -> [ToolHandler]
     public var store: (any ScanStore)?
     public var settings: Settings
@@ -33,6 +39,7 @@ public struct ScanEnvironment: Sendable {
         resolver: RequesterResolver,
         collector: Collector,
         analyst: (any Analyst)?,
+        fallbackAnalyst: (any Analyst)? = nil,
         toolHandlers: @escaping @Sendable (Subject?, [EvidenceItem]) -> [ToolHandler] = { _, _ in [] },
         store: (any ScanStore)?,
         settings: Settings,
@@ -44,6 +51,7 @@ public struct ScanEnvironment: Sendable {
         self.resolver = resolver
         self.collector = collector
         self.analyst = analyst
+        self.fallbackAnalyst = fallbackAnalyst
         self.toolHandlers = toolHandlers
         self.store = store
         self.settings = settings
@@ -222,38 +230,81 @@ public struct ScanPipeline: Sendable {
             maxToolCalls: env.settings.maxToolCalls, allowWebSearch: env.settings.allowWebSearch, locale: env.locale
         )
         let tools = ToolRegistry(subject: record.subject, handlers: env.toolHandlers(record.subject, record.evidence))
-        let analysisStarted = Date()
-        log.info("analyst", "\(scanID) \(analyst.id) start · model \(request.model) · \(tools.tools.count) tools")
         record.verdictRejected = nil
-        do {
-            let result = try await analyst.analyze(request, tools: tools, onEvent: { event in
-                if case .toolCall(let name, _) = event { log.info("analyst", "\(scanID) tool \(name)") }
-                onEvent(.analysis(event))
-            })
-            record.engine = analyst.id
-            record.model = result.model
-            record.inputTokens += result.inputTokens
-            record.outputTokens += result.outputTokens
-            record.costUSD += result.costUSD
-            record.analystSession = result.session
-            record.fromCache = false
-            // Validate against the record's current hard score, not the one
-            // captured when analysis began: identity confirmation may have
-            // turned it red in the meantime, and red is a floor the model
-            // cannot lift, whenever the answer arrives.
-            switch VerdictValidator().validate(result.verdict, against: record.hardScore ?? hard, evidenceKeys: Set(record.evidence.map(\.key.rawValue))) {
-            case .accepted(let verdict):
-                record.verdict = verdict
-                log.info("analyst", "\(scanID) \(analyst.id) verdict in \(elapsedMs(since: analysisStarted)) ms: \(verdict.verdict.rawValue) \(verdict.confidence)% \(verdict.recommendation.rawValue) · \(result.inputTokens) in / \(result.outputTokens) out · $\(String(format: "%.4f", result.costUSD))")
-                onEvent(.verdict(verdict))
-            case .rejected(let reason):
-                record.verdictRejected = reason
-                log.error("analyst", "\(scanID) \(analyst.id) verdict REJECTED after \(elapsedMs(since: analysisStarted)) ms: \(reason)")
-                onEvent(.verdictRejected(reason: reason))
+        var current = analyst
+        var triedFallback = false
+        var failures: [String] = []
+        while true {
+            let model = current.modelName(for: request)
+            let label = EngineChoice.label(analystID: current.id, model: model)
+            let analysisStarted = Date()
+            log.info("analyst", "\(scanID) \(current.id) start · model \(model) · \(tools.tools.count) tools")
+            do {
+                let result = try await current.analyze(request, tools: tools, onEvent: { event in
+                    if case .toolCall(let name, _) = event { log.info("analyst", "\(scanID) tool \(name)") }
+                    onEvent(.analysis(event))
+                })
+                accept(result, from: current, into: &record, hard: hard, scanID: scanID, started: analysisStarted, onEvent: onEvent)
+                return
+            } catch {
+                log.error("analyst", "\(scanID) \(current.id) failed after \(elapsedMs(since: analysisStarted)) ms: \(error)")
+                let reason = (error as? AnalystError)?.userMessage ?? String(describing: error)
+                failures.append("\(label): \(reason)")
+                if !triedFallback, let next = await fallback(after: current, error: error, request: request) {
+                    triedFallback = true
+                    let nextLabel = EngineChoice.label(analystID: next.id, model: next.modelName(for: request))
+                    log.info("analyst", "\(scanID) falling back from \(label) to \(nextLabel)")
+                    onEvent(.fallback(from: label, reason: reason, to: nextLabel))
+                    current = next
+                    continue
+                }
+                onEvent(.analysisFailed(failures.joined(separator: "\n")))
+                return
             }
-        } catch {
-            log.error("analyst", "\(scanID) \(analyst.id) failed after \(elapsedMs(since: analysisStarted)) ms: \(error)")
-            onEvent(.analysisFailed(String(describing: error)))
+        }
+    }
+
+    /// The fallback to ask after `failed` threw `error`, if there is one that
+    /// may run: not after a cancellation, not the same agent and model again,
+    /// and only within local-only mode and the budget, like the agent itself.
+    private func fallback(after failed: any Analyst, error: Error, request: AnalysisRequest) async -> (any Analyst)? {
+        guard let next = environment.fallbackAnalyst, !Task.isCancelled else { return nil }
+        if let error = error as? AnalystError, !error.allowsFallback { return nil }
+        if error is CancellationError { return nil }
+        if next.id == failed.id, next.modelName(for: request) == failed.modelName(for: request) { return nil }
+        var reasonToSkip = Self.standingReasonToSkip(next, env: environment)
+        if reasonToSkip == nil { reasonToSkip = await budgetReasonToSkip(next) }
+        if let reason = reasonToSkip {
+            AppLog.shared.info("analyst", "fallback \(next.id) not asked: \(reason)")
+            return nil
+        }
+        return next
+    }
+
+    /// Validates an answer and fills in the record's verdict, engine, cost and
+    /// conversation state.
+    private func accept(_ result: AnalysisResult, from analyst: any Analyst, into record: inout ScanRecord, hard: HardScoreResult, scanID: String, started: Date, onEvent: @escaping @Sendable (ScanEvent) -> Void) {
+        let log = AppLog.shared
+        record.engine = analyst.id
+        record.model = result.model
+        record.inputTokens += result.inputTokens
+        record.outputTokens += result.outputTokens
+        record.costUSD += result.costUSD
+        record.analystSession = result.session
+        record.fromCache = false
+        // Validate against the record's current hard score, not the one
+        // captured when analysis began: identity confirmation may have
+        // turned it red in the meantime, and red is a floor the model
+        // cannot lift, whenever the answer arrives.
+        switch VerdictValidator().validate(result.verdict, against: record.hardScore ?? hard, evidenceKeys: Set(record.evidence.map(\.key.rawValue))) {
+        case .accepted(let verdict):
+            record.verdict = verdict
+            log.info("analyst", "\(scanID) \(analyst.id) verdict in \(elapsedMs(since: started)) ms: \(verdict.verdict.rawValue) \(verdict.confidence)% \(verdict.recommendation.rawValue) · \(result.inputTokens) in / \(result.outputTokens) out · $\(String(format: "%.4f", result.costUSD))")
+            onEvent(.verdict(verdict))
+        case .rejected(let reason):
+            record.verdictRejected = reason
+            log.error("analyst", "\(scanID) \(analyst.id) verdict REJECTED after \(elapsedMs(since: started)) ms: \(reason)")
+            onEvent(.verdictRejected(reason: reason))
         }
     }
 

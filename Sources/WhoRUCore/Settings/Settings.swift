@@ -39,6 +39,21 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
 
     public var defaultModel: String { suggestedModels.first ?? "" }
 
+    /// Models to offer as the fallback for this same agent, most likely to
+    /// still have quota first: a lighter model before a heavier one, and
+    /// Fable, which has a limit of its own, last.
+    public var fallbackModelPreference: [String] {
+        switch self {
+        case .claudeCode: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "claude-fable-5-1"]
+        default: suggestedModels.reversed()
+        }
+    }
+
+    /// The fallback model to preselect when this agent backs up itself running `primary`.
+    public func fallbackModel(whenPrimaryRuns primary: String) -> String {
+        fallbackModelPreference.first { $0 != primary } ?? ""
+    }
+
     /// Human name for a model id in the picker.
     public func modelDisplayName(_ id: String) -> String {
         switch id {
@@ -53,6 +68,12 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
         case "on-device": "On-device model"
         default: id
         }
+    }
+
+    /// "Claude Code · Claude Opus 5" for an analyst id and the model it ran.
+    public static func label(analystID: String, model: String) -> String {
+        guard let engine = EngineChoice(analystID: analystID) else { return model.isEmpty ? analystID : "\(analystID) · \(model)" }
+        return model.isEmpty ? engine.displayName : "\(engine.displayName) · \(engine.modelDisplayName(model))"
     }
 
     /// Engines that run entirely on this Mac and are allowed in local-only mode.
@@ -232,11 +253,30 @@ public struct Settings: Codable, Sendable, Hashable {
     public var engineModels: [String: String] = [:]
     public var localModelURL: String = "http://localhost:11434"
     public var localModelName: String = "llama3"
+    /// Asked when the agent fails (a usage limit, sign-in lapsed, no answer
+    /// in time). It can be the same agent with another model. `.none` = off.
+    public var fallbackEngine: EngineChoice = .none
+    /// Model for the fallback; empty or "custom" = that engine's first suggestion.
+    public var fallbackModel: String = ""
 
     /// The chosen model for an engine, or that engine's first suggestion.
     public func model(for engine: EngineChoice) -> String {
         let chosen = engineModels[engine.rawValue] ?? ""
         return chosen.isEmpty || chosen == "custom" ? engine.defaultModel : chosen
+    }
+
+    /// The fallback's model, resolved like `model(for:)`.
+    public var resolvedFallbackModel: String {
+        fallbackModel.isEmpty || fallbackModel == "custom" ? fallbackEngine.defaultModel : fallbackModel
+    }
+
+    /// These settings with the fallback in the agent's place, so the fallback
+    /// is built exactly like a chosen agent is.
+    public var promotingFallback: Settings {
+        var adjusted = self
+        adjusted.engine = fallbackEngine
+        adjusted.engineModels[fallbackEngine.rawValue] = fallbackModel
+        return adjusted
     }
 
     // Privacy
@@ -275,6 +315,8 @@ public struct Settings: Codable, Sendable, Hashable {
         engineModels = try c.decodeIfPresent([String: String].self, forKey: .engineModels) ?? d.engineModels
         localModelURL = try c.decodeIfPresent(String.self, forKey: .localModelURL) ?? d.localModelURL
         localModelName = try c.decodeIfPresent(String.self, forKey: .localModelName) ?? d.localModelName
+        fallbackEngine = try c.decodeIfPresent(EngineChoice.self, forKey: .fallbackEngine) ?? d.fallbackEngine
+        fallbackModel = try c.decodeIfPresent(String.self, forKey: .fallbackModel) ?? d.fallbackModel
         localOnly = try c.decodeIfPresent(Bool.self, forKey: .localOnly) ?? d.localOnly
         virusTotalEnabled = try c.decodeIfPresent(Bool.self, forKey: .virusTotalEnabled) ?? d.virusTotalEnabled
         historyRetentionDays = try c.decodeIfPresent(Int.self, forKey: .historyRetentionDays) ?? d.historyRetentionDays

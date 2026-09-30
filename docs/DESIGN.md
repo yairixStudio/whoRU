@@ -202,6 +202,10 @@ After the response returns, the app checks it against the hard score in code. A 
 
 429 and 5xx: backoff, two retries. `stop_reason: refusal`: “the model declined to analyze, showing evidence only”. Soft timeout 20 s (headline stays, “the model is slow” note), hard timeout 45 s. Offline: straight to evidence only. When the model is Fable 5.1 or Opus 5, the request opts into server-side fallbacks.
 
+A command-line agent's failure is read in its own words. Claude Code reports an API error (a usage limit, a lapsed sign-in) as a JSON result on stdout with `is_error` and `api_error_status`, exits 1 and leaves stderr empty; whoRU classifies it (429 is a usage limit, 401 a sign-in) and keeps the CLI's sentence. The panel shows that sentence with the agent and model it came from and a link to Settings; the log keeps the technical form.
+
+If a fallback agent is set, any failure except a cancellation asks it once, with the same bundle and tools. It is built and verified like a chosen agent, never by automatic detection, is skipped when it is the same agent and model, and obeys local-only mode and the budget. The record carries the engine and model that answered, the conversation continues on them, and the panel says that the fallback answered and why the agent did not.
+
 ## 10. Chat
 
 A direct continuation of the scan inside the panel, under the verdict; detaches into a regular window if the dialog closes. It knows the bundle, the verdict, the tools and the history of the same publisher or hash (summaries). It does not know file contents or other conversations. Three suggested questions come from the verdict; answers stream; tool use is shown. Cost and model are shown in history and settings, not in the panel. The chat cannot act on the system; when asked to “remove it”, it explains how and offers “Open in Finder” and “Open Privacy settings”.
@@ -268,7 +272,7 @@ Not “inspired by Apple” but built from Apple’s parts: Liquid Glass, the sy
 
 General: launch at login (on), show next to dialogs (on), ask the AI automatically (on), strictness (standard / strict), permissions to watch (all, behind a disclosure), trusted and blocked publishers (behind a disclosure), Accessibility status.
 
-AI: engine (automatic / Claude Code / Claude API / Codex CLI / Gemini CLI / local / none) with what is installed listed underneath; model per command-line engine (the CLI's default first); for the API: key with live validation, analysis depth, monthly budget with a meter, web search (off).
+AI: engine (automatic / Claude Code / Claude API / Codex CLI / Gemini CLI / local / none) with what is installed listed underneath; model per command-line engine (the CLI's default first); a fallback agent and its model (none by default; the same agent with another model is allowed, and a lighter model is preselected); for the API: key with live validation, analysis depth, monthly budget with a meter, web search (off).
 
 Privacy: local-only mode (off), VirusTotal (off, with key), the three fixed statements, Full Disk Access button, data folder, reset.
 

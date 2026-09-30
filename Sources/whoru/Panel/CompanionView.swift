@@ -431,6 +431,7 @@ struct CompanionView: View {
     /// Nothing is sent until the user presses or asks.
     @ViewBuilder
     private var aiSection: some View {
+        aiProblem
         // Drawn whenever there is a conversation, whichever agent produced it:
         // an answer must never arrive to a panel that shows no sign of it.
         if !session.messages.isEmpty || session.isReplying {
@@ -442,6 +443,41 @@ struct CompanionView: View {
         if model.canChat(session) {
             composer
         }
+    }
+
+    /// Why the AI did not answer, or why another agent answered, in the
+    /// agent's own words ("You've reached your Fable limit…") and where to
+    /// change it. Without this a failed agent looks like no agent at all.
+    @ViewBuilder
+    private var aiProblem: some View {
+        if case .failed(let message) = session.analysis {
+            aiNote(symbol: "exclamationmark.triangle", tint: .orange, text: message,
+                   footer: session.fallback == nil ? "Pick another model, or set a fallback, in Settings → AI." : "Pick another model or fallback in Settings → AI.",
+                   showsSettings: true)
+        } else if let fallback = session.fallback {
+            aiNote(symbol: "arrow.uturn.forward", tint: .secondary, text: "\(fallback.failed): \(fallback.reason)",
+                   footer: session.verdict != nil ? "Answered by \(fallback.next) instead." : "Asking \(fallback.next) instead…",
+                   showsSettings: false)
+        }
+    }
+
+    private func aiNote(symbol: String, tint: Color, text: String, footer: String, showsSettings: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: symbol).foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(footer)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if showsSettings {
+                    Button("Open Settings…") { AppDelegate.shared?.showSettings() }
+                        .buttonStyle(.link)
+                }
+            }
+        }
+        .font(.caption)
     }
 
     private var askAIButton: some View {
