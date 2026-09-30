@@ -105,6 +105,11 @@ public enum AnalystError: Error, Sendable, CustomStringConvertible {
     case http(status: Int, body: String)
     case refusal(String?)
     case invalidResponse(String)
+    /// The account hit a usage or rate limit, for this model or overall. The
+    /// text is the agent's own sentence, which says which limit it was.
+    case usageLimit(String)
+    /// The agent reported a failure in words meant for a person; shown as is.
+    case agentMessage(String)
     case timeout
     case cancelled
 
@@ -114,20 +119,58 @@ public enum AnalystError: Error, Sendable, CustomStringConvertible {
         case .http(let status, let body): "HTTP \(status): \(body.prefix(300))"
         case .refusal(let why): "the model declined to analyze" + (why.map { " (\($0))" } ?? "")
         case .invalidResponse(let s): "invalid response: \(s)"
+        case .usageLimit(let s): "usage limit: \(s)"
+        case .agentMessage(let s): "agent error: \(s)"
         case .timeout: "the model did not answer in time"
         case .cancelled: "cancelled"
         }
+    }
+
+    /// One sentence for the panel. `description` stays technical for the log.
+    public var userMessage: String {
+        switch self {
+        case .notConfigured(let s), .usageLimit(let s), .agentMessage(let s): s
+        case .http(let status, let body):
+            switch status {
+            case 401, 403: "The API key was rejected (HTTP \(status))."
+            case 429: "Rate limit reached (HTTP 429). Try again later or pick another model."
+            case 500...: "The service is unavailable right now (HTTP \(status))."
+            default: "The request failed (HTTP \(status))" + (Self.apiErrorMessage(in: body).map { ": \($0)" } ?? ".")
+            }
+        case .refusal: "The model declined to analyze this request."
+        case .invalidResponse(let s): "The answer could not be read (\(s.prefix(160)))."
+        case .timeout: "The agent did not answer in time."
+        case .cancelled: "Cancelled."
+        }
+    }
+
+    /// Whether another agent could still answer. Only a cancellation stops
+    /// the fallback; a limit, a timeout or an unreadable answer is exactly
+    /// what it is for.
+    public var allowsFallback: Bool {
+        if case .cancelled = self { return false }
+        return true
     }
 
     public var isRetryable: Bool {
         if case .http(let status, _) = self { return status == 429 || status >= 500 }
         return false
     }
+
+    /// `error.message` from an API error body, when there is one.
+    static func apiErrorMessage(in body: String) -> String? {
+        guard let json = try? JSONValue.parse(body), let message = json["error"]?["message"]?.stringValue, !message.isEmpty else { return nil }
+        return String(message.prefix(200))
+    }
 }
 
 /// One AI engine. Implementations: Claude API, Claude Code, local model.
 public protocol Analyst: Sendable {
     var id: String { get }
+
+    /// The model this analyst will actually run for `request`: its own
+    /// setting when it has one, else the request's.
+    func modelName(for request: AnalysisRequest) -> String
 
     /// Produces a structured verdict for the bundle.
     func analyze(
@@ -144,6 +187,10 @@ public protocol Analyst: Sendable {
         tools: any AnalystToolRunner,
         onEvent: @escaping @Sendable (AnalysisEvent) -> Void
     ) async throws -> ChatReply
+}
+
+extension Analyst {
+    public func modelName(for request: AnalysisRequest) -> String { request.model }
 }
 
 /// Extracts the `headline` string from a partially streamed JSON document.

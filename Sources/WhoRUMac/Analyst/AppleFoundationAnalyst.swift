@@ -49,6 +49,8 @@ public struct AppleFoundationAnalyst: Analyst {
 
     public static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings-extension")!
 
+    public func modelName(for request: AnalysisRequest) -> String { "on-device" }
+
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
         #if canImport(FoundationModels)
         guard #available(macOS 26, *), Self.isAvailable else { throw AnalystError.notConfigured(Self.unavailabilityReason() ?? "unavailable") }

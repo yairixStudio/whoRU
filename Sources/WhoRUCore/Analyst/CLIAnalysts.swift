@@ -49,6 +49,15 @@ enum CLIAgent {
         return env
     }
 
+    /// A usage or rate limit named in a failed run's output, as the tool's
+    /// own last line about it, so the panel can say which limit it was.
+    static func usageLimit(in output: CommandOutput) -> AnalystError? {
+        let markers = ["rate limit", "usage limit", "quota", "too many requests", "resource_exhausted"]
+        let lines = (output.stderr + "\n" + output.stdout).split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let line = lines.last(where: { line in markers.contains { line.lowercased().contains($0) } }) else { return nil }
+        return .usageLimit(String(line.prefix(300)))
+    }
+
     static func decodeVerdict(from text: String) throws -> Verdict {
         guard let object = PartialJSON.firstObject(in: text) else { throw AnalystError.invalidResponse("no JSON object in answer") }
         do {
@@ -95,8 +104,10 @@ public struct CodexAnalyst: Analyst {
     public static func locate(extraPaths: [String] = []) -> String? { CLIAgent.locate(names: ["codex"], extraPaths: extraPaths) }
     public static func version(of executable: String) async -> String? { await CLIAgent.version(of: executable) }
 
+    public func modelName(for request: AnalysisRequest) -> String { model.isEmpty ? "codex default" : model }
+
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
-        onEvent(.started(model: model.isEmpty ? "codex default" : model))
+        onEvent(.started(model: modelName(for: request)))
         let prompt = AnalystPrompt.systemPrompt + "\n\n" + AnalystPrompt.userMessage(for: request.bundle) + "\n\n" + AnalystPrompt.schemaInstruction()
             + "\n\nAnswer from the evidence bundle only. Do not run commands and do not read files."
         let text = try await run(prompt: prompt)
@@ -106,13 +117,16 @@ public struct CodexAnalyst: Analyst {
     }
 
     public func reply(to question: String, session: AnalystSession, request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> ChatReply {
-        onEvent(.started(model: model.isEmpty ? "codex default" : model))
+        // The conversation stays on the model that answered, which after a
+        // fallback to another model of the same agent is not this one's.
+        let continuing = session.model.isEmpty || session.model == model ? self : CodexAnalyst(executable: executable, model: session.model, hardTimeout: hardTimeout)
+        onEvent(.started(model: continuing.modelName(for: request)))
         var transcript = CLIAgent.transcript(from: session)
-        let text = try await run(prompt: CLIAgent.chatPrompt(transcript: transcript, bundle: request.bundle, question: question))
+        let text = try await continuing.run(prompt: CLIAgent.chatPrompt(transcript: transcript, bundle: request.bundle, question: question))
         onEvent(.text(text))
         transcript.append(["role": "user", "text": .string(question)])
         transcript.append(["role": "assistant", "text": .string(text)])
-        return ChatReply(text: text, session: AnalystSession(engine: id, model: model, payload: ["transcript": .array(transcript)]), inputTokens: 0, outputTokens: 0, costUSD: 0, toolCalls: [])
+        return ChatReply(text: text, session: AnalystSession(engine: id, model: continuing.model, payload: ["transcript": .array(transcript)]), inputTokens: 0, outputTokens: 0, costUSD: 0, toolCalls: [])
     }
 
     private func run(prompt: String) async throws -> String {
@@ -128,6 +142,7 @@ public struct CodexAnalyst: Analyst {
             if text.contains("login") || text.contains("not authenticated") || text.contains("api key") || text.contains("unauthorized") {
                 throw AnalystError.notConfigured("Codex is not signed in. Sign in from Settings → AI.")
             }
+            if let limit = CLIAgent.usageLimit(in: output) { throw limit }
             throw AnalystError.invalidResponse("codex exited \(output.status): \(output.stderr.suffix(300))")
         }
         if let answer = try? String(contentsOf: answerFile, encoding: .utf8), !answer.isEmpty { return answer }
@@ -153,8 +168,10 @@ public struct GeminiAnalyst: Analyst {
     public static func locate(extraPaths: [String] = []) -> String? { CLIAgent.locate(names: ["gemini"], extraPaths: extraPaths) }
     public static func version(of executable: String) async -> String? { await CLIAgent.version(of: executable) }
 
+    public func modelName(for request: AnalysisRequest) -> String { model.isEmpty ? "gemini default" : model }
+
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
-        onEvent(.started(model: model.isEmpty ? "gemini default" : model))
+        onEvent(.started(model: modelName(for: request)))
         let prompt = AnalystPrompt.systemPrompt + "\n\n" + AnalystPrompt.userMessage(for: request.bundle) + "\n\n" + AnalystPrompt.schemaInstruction()
             + "\n\nAnswer from the evidence bundle only. Do not run commands and do not read files."
         let text = try await run(prompt: prompt)
@@ -164,13 +181,16 @@ public struct GeminiAnalyst: Analyst {
     }
 
     public func reply(to question: String, session: AnalystSession, request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> ChatReply {
-        onEvent(.started(model: model.isEmpty ? "gemini default" : model))
+        // The conversation stays on the model that answered, which after a
+        // fallback to another model of the same agent is not this one's.
+        let continuing = session.model.isEmpty || session.model == model ? self : GeminiAnalyst(executable: executable, model: session.model, hardTimeout: hardTimeout)
+        onEvent(.started(model: continuing.modelName(for: request)))
         var transcript = CLIAgent.transcript(from: session)
-        let text = try await run(prompt: CLIAgent.chatPrompt(transcript: transcript, bundle: request.bundle, question: question))
+        let text = try await continuing.run(prompt: CLIAgent.chatPrompt(transcript: transcript, bundle: request.bundle, question: question))
         onEvent(.text(text))
         transcript.append(["role": "user", "text": .string(question)])
         transcript.append(["role": "assistant", "text": .string(text)])
-        return ChatReply(text: text, session: AnalystSession(engine: id, model: model, payload: ["transcript": .array(transcript)]), inputTokens: 0, outputTokens: 0, costUSD: 0, toolCalls: [])
+        return ChatReply(text: text, session: AnalystSession(engine: id, model: continuing.model, payload: ["transcript": .array(transcript)]), inputTokens: 0, outputTokens: 0, costUSD: 0, toolCalls: [])
     }
 
     private func run(prompt: String) async throws -> String {
@@ -183,6 +203,7 @@ public struct GeminiAnalyst: Analyst {
             if text.contains("login") || text.contains("authenticat") || text.contains("api key") || text.contains("unauthorized") {
                 throw AnalystError.notConfigured("Gemini CLI is not signed in. Sign in from Settings → AI.")
             }
+            if let limit = CLIAgent.usageLimit(in: output) { throw limit }
             throw AnalystError.invalidResponse("gemini exited \(output.status): \(output.stderr.suffix(300))")
         }
         // Newer versions can wrap the answer as {"response": "..."}; older ones print it directly.

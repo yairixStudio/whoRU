@@ -26,6 +26,8 @@ public struct LocalModelAnalyst: Analyst {
         return (response as? HTTPURLResponse)?.statusCode == 200
     }
 
+    public func modelName(for request: AnalysisRequest) -> String { model }
+
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
         onEvent(.started(model: model))
         let messages: [JSONValue] = [

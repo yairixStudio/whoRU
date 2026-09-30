@@ -108,8 +108,12 @@ public struct ClaudeCodeAnalyst: Analyst {
         return "The only command available to you is \(inspectShim), which inspects the program under review and takes exactly one argument, a subcommand: \(inspectSubcommands.joined(separator: ", ")). It accepts no paths; the subject is fixed. Do not read file contents and do not look at the user's other files or folders."
     }
 
+    public func modelName(for request: AnalysisRequest) -> String {
+        model.isEmpty || model == "custom" ? request.model : model
+    }
+
     public func analyze(_ request: AnalysisRequest, tools: any AnalystToolRunner, onEvent: @escaping @Sendable (AnalysisEvent) -> Void) async throws -> AnalysisResult {
-        let modelArgument = model.isEmpty || model == "custom" ? request.model : model
+        let modelArgument = modelName(for: request)
         onEvent(.started(model: modelArgument))
         let prompt = AnalystPrompt.userMessage(for: request.bundle) + "\n\n" + AnalystPrompt.schemaInstruction()
         let shim = Self.locateInspectShim()
@@ -144,10 +148,14 @@ public struct ClaudeCodeAnalyst: Analyst {
         // The system prompt is not part of the resumed session; without it the
         // CLI falls back to its coding-assistant persona.
         let shim = Self.locateInspectShim()
+        // Continue on the model that answered, which after a fallback is not
+        // the one in settings; without --model the CLI would pick its default.
+        let modelArguments = session.model.isEmpty ? [] : ["--model", session.model]
         let output = try await run([
             "-p", question,
             "--resume", sessionID,
             "--output-format", "json",
+        ] + modelArguments + [
             "--append-system-prompt", AnalystPrompt.systemPrompt + "\n\n" + AnalystPrompt.chatSystemAddendum() + "\n\n" + Self.toolInstruction(inspectShim: shim),
             "--allowedTools", Self.allowedTools(inspectShim: shim).joined(separator: ","),
             "--disallowedTools", Self.disallowedTools.joined(separator: ","),
@@ -176,23 +184,42 @@ public struct ClaudeCodeAnalyst: Analyst {
         // nothing of ours, so it must not inherit our permissions either.
         let output = try await Command.run(executable, arguments, timeout: hardTimeout, environment: environment, workingDirectory: Self.scratchDirectory, disclaimResponsibility: true)
         if output.timedOut { throw AnalystError.timeout }
-        guard output.status == 0 else {
-            let text = (output.stdout + output.stderr).lowercased()
-            if text.contains("not logged in") || text.contains("login") || text.contains("authenticat") || text.contains("api key") {
-                throw AnalystError.notConfigured("Claude Code is not signed in. Sign in from Settings → AI.")
-            }
-            throw AnalystError.invalidResponse("claude exited \(output.status): \(output.stderr.prefix(300))")
-        }
+        guard output.status == 0 else { throw Self.failure(from: output) }
         return output
+    }
+
+    static let notSignedIn = AnalystError.notConfigured("Claude Code is not signed in. Sign in from Settings → AI.")
+
+    /// What went wrong, in the CLI's own words where it has some. With
+    /// `--output-format json` an API failure (a usage limit, a lapsed
+    /// sign-in) is a result object on stdout with `is_error` and the HTTP
+    /// status in `api_error_status`, and the process exits 1 with nothing on
+    /// stderr; stderr only helps when the CLI failed before it could answer.
+    static func failure(from output: CommandOutput) -> AnalystError {
+        let json = try? JSONValue.parse(output.stdout)
+        let message = json?["result"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch json?["api_error_status"]?.intValue {
+        case 429: return .usageLimit(message.flatMap { $0.isEmpty ? nil : $0 } ?? "Claude Code reached a usage limit. Try again later or pick another model.")
+        case 401: return notSignedIn
+        default: break
+        }
+        if let message, !message.isEmpty {
+            let lower = message.lowercased()
+            if lower.contains("not logged in") || lower.contains("/login") { return notSignedIn }
+            if (lower.contains("reached your") && lower.contains("limit")) || lower.contains("usage limit") || lower.contains("rate limit") { return .usageLimit(message) }
+            return .agentMessage(String(message.prefix(400)))
+        }
+        let text = (output.stdout + output.stderr).lowercased()
+        if text.contains("not logged in") || text.contains("login") || text.contains("authenticat") || text.contains("api key") { return notSignedIn }
+        let detail = output.stderr.isEmpty ? output.stdout : output.stderr
+        return .invalidResponse("claude exited \(output.status): \(detail.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300))")
     }
 
     struct Usage { var input: Int; var output: Int; var cost: Double }
 
     static func parse(_ output: CommandOutput) throws -> (String, String, Usage) {
         let json = try JSONValue.parse(output.stdout)
-        if json["is_error"]?.boolValue == true {
-            throw AnalystError.invalidResponse(json["result"]?.stringValue ?? "claude reported an error")
-        }
+        if json["is_error"]?.boolValue == true { throw failure(from: output) }
         let text = json["result"]?.stringValue ?? ""
         let sessionID = json["session_id"]?.stringValue ?? ""
         let usage = Usage(
