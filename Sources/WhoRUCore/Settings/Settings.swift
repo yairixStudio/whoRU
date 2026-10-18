@@ -26,11 +26,12 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     }
 
     /// Models offered in the picker. The first one is what a fresh choice of
-    /// this agent uses; there is no unnamed default.
+    /// this agent uses. An empty name is the CLI's own default (no `-m`):
+    /// Codex signed in with ChatGPT rejects the named models it does not offer.
     public var suggestedModels: [String] {
         switch self {
         case .claudeCode: ["claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"]
-        case .codex: ["gpt-5-codex", "gpt-5"]
+        case .codex: ["", "gpt-5-codex", "gpt-5"]
         case .gemini: ["gemini-2.5-pro", "gemini-2.5-flash"]
         case .appleIntelligence: ["on-device"]
         default: []
@@ -45,6 +46,7 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     public var fallbackModelPreference: [String] {
         switch self {
         case .claudeCode: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5", "claude-fable-5-1"]
+        case .codex: ["", "gpt-5", "gpt-5-codex"]
         default: suggestedModels.reversed()
         }
     }
@@ -57,6 +59,7 @@ public enum EngineChoice: String, Codable, Sendable, CaseIterable {
     /// Human name for a model id in the picker.
     public func modelDisplayName(_ id: String) -> String {
         switch id {
+        case "" where suggestedModels.contains(""): "\(displayName.replacingOccurrences(of: " CLI", with: "")) default"
         case "claude-fable-5-1": "Claude Fable 5.1"
         case "claude-opus-5": "Claude Opus 5"
         case "claude-sonnet-5": "Claude Sonnet 5"

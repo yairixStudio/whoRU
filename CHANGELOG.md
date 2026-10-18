@@ -19,6 +19,11 @@ minor bump may change behaviour.
 
 ### Fixed
 
+- Codex signed in with a ChatGPT account failed on every scan: whoRU asked for
+  `gpt-5-codex`, which that login does not offer. A fresh Codex choice, as the
+  agent or as the fallback, now runs on the CLI's own default model (*Codex
+  default* in Settings → AI); named models and *Other…* are still there.
+
 - A failed agent showed only *AI unavailable · evidence only*, with no reason.
   Claude Code reports an API failure, such as *You've reached your Fable
   limit*, as JSON on stdout with an empty stderr, and whoRU only read stderr.

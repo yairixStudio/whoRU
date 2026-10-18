@@ -232,5 +232,13 @@ private func pipeline(analyst: any Analyst, fallback: (any Analyst)?, settings: 
         #expect(EngineChoice.claudeCode.fallbackModel(whenPrimaryRuns: "claude-opus-5") == "claude-sonnet-5")
         #expect(EngineChoice.claudeCode.fallbackModel(whenPrimaryRuns: "claude-sonnet-5") == "claude-opus-5")
         #expect(Set(EngineChoice.claudeCode.fallbackModelPreference) == Set(EngineChoice.claudeCode.suggestedModels))
+        // Codex as a fresh fallback runs on the CLI's default; backing up that default picks a named model.
+        settings.fallbackEngine = .codex
+        settings.fallbackModel = ""
+        #expect(settings.resolvedFallbackModel == "")
+        #expect(settings.promotingFallback.model(for: .codex) == "")
+        #expect(EngineChoice.codex.fallbackModel(whenPrimaryRuns: "") == "gpt-5")
+        #expect(EngineChoice.codex.fallbackModel(whenPrimaryRuns: "gpt-5") == "")
+        #expect(Set(EngineChoice.codex.fallbackModelPreference) == Set(EngineChoice.codex.suggestedModels))
     }
 }

@@ -84,7 +84,12 @@ private let subject = Subject(path: "/Applications/Thing.app", resolver: Resolve
     }
 
     @Test func engineSuggestionsStartWithDefault() {
-        #expect(EngineChoice.codex.defaultModel == "gpt-5-codex")
+        // A fresh Codex choice runs on the CLI's default: no `-m`, which a ChatGPT login needs.
+        #expect(EngineChoice.codex.defaultModel == "")
+        #expect(Settings().model(for: .codex) == "")
+        #expect(EngineChoice.codex.modelDisplayName("") == "Codex default")
+        #expect(EngineChoice.claudeAPI.modelDisplayName("") == "")
+        #expect(EngineChoice.codex.suggestedModels.contains("gpt-5-codex"))
         #expect(EngineChoice.claudeCode.suggestedModels.contains("claude-fable-5-1"))
         #expect(EngineChoice.claudeCode.modelDisplayName("claude-opus-5") == "Claude Opus 5")
         #expect(EngineChoice.claudeAPI.suggestedModels.isEmpty)
