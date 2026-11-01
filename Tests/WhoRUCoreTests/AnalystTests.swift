@@ -212,7 +212,15 @@ private func verdict(_ kind: VerdictKind, confidence: Int = 90, recommendation: 
 /// would not lead there).
 @Suite struct InspectShimTests {
     static var shim: String? {
-        ClaudeCodeAnalyst.locateInspectShim(near: Bundle.module.bundleURL.deletingLastPathComponent())
+        // The resource bundle sits inside the .xctest bundle on the current toolchain
+        // (.../Debug/WhoRUCoreTests.xctest/Contents/Resources) and next to the
+        // products on older ones, so walk up until a directory holds the shim.
+        var directory: URL? = Bundle.module.bundleURL.deletingLastPathComponent()
+        while let current = directory, current.path != "/" {
+            if let found = ClaudeCodeAnalyst.locateInspectShim(near: current) { return found }
+            directory = current.deletingLastPathComponent()
+        }
+        return nil
     }
 
     func run(_ arguments: [String], subject: String?, pid: Int32? = nil) async throws -> CommandOutput {
