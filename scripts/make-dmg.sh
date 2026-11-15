@@ -10,7 +10,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
-VERSION="${VERSION:-0.2.1}"
+VERSION="${VERSION:-0.3.0}"
 APP="build/whoRU.app"
 STAGE="build/dmg"
 DMG="build/whoRU-$VERSION.dmg"

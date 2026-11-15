@@ -4,7 +4,7 @@ All notable changes to whoRU. Dates are the release date; versions follow
 [semantic versioning](https://semver.org), and while the major version is 0 a
 minor bump may change behaviour.
 
-## Unreleased
+## 0.3.0 — 2026-11-15
 
 ### Added
 

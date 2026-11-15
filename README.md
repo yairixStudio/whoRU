@@ -23,7 +23,7 @@ whoRU never clicks anything for you. The Allow and Don’t Allow buttons stay yo
 
 ## Status
 
-Early and working. Current version 0.2.1; see the [changelog](CHANGELOG.md). Built in the open from the [design document](docs/DESIGN.md).
+Early and working. Current version 0.3.0; see the [changelog](CHANGELOG.md). Built in the open from the [design document](docs/DESIGN.md).
 
 - [x] Core models, dialog text parser with fixtures, hard-evidence scoring, deterministic headline
 - [x] macOS evidence checks: signature identity and integrity, certificate revocation, Gatekeeper and notarization, SHA-256, official release manifest, download origin, install location, launch chain, persistence, Info.plist declarations, entitlements, timestamps, network connections, optional VirusTotal
@@ -99,16 +99,16 @@ More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Install
 
-Signed and notarized builds of 0.2.1 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://askwhoru.com/#install). Take `whoRU-0.2.1.pkg` to install it, or `whoRU-0.2.1.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
+Signed and notarized builds of 0.3.0 are on the [releases page](https://github.com/yairixStudio/whoRU/releases/latest) and on the [download page](https://askwhoru.com/#install). Take `whoRU-0.3.0.pkg` to install it, or `whoRU-0.3.0.dmg` to drag the app across yourself. Both need macOS 26 or later on Apple silicon.
 
 Both are signed with an Apple Developer ID and notarized by Apple, so they open without a Gatekeeper warning. A tool that asks you to check what you are about to run should be checkable itself, and every release publishes what you need to do it:
 
 ```sh
-shasum -a 256 -c SHA256SUMS.txt          # → whoRU-0.2.1.pkg: OK
-pkgutil --check-signature whoRU-0.2.1.pkg
+shasum -a 256 -c SHA256SUMS.txt          # → whoRU-0.3.0.pkg: OK
+pkgutil --check-signature whoRU-0.3.0.pkg
 #   Notarization: trusted by the Apple notary service
 #   1. Developer ID Installer: yair amsalem (A3W935G59T)
-spctl --assess --type install -vv whoRU-0.2.1.pkg
+spctl --assess --type install -vv whoRU-0.3.0.pkg
 #   source=Notarized Developer ID
 ```
 
@@ -121,7 +121,7 @@ scripts/build-app.sh          # → build/whoRU.app with the CLI inside (signed 
 open build/whoRU.app
 scripts/make-pkg.sh           # → build/whoRU-<version>.pkg: the one file for a download page
 scripts/make-dmg.sh           # → build/whoRU-<version>.dmg, drag-to-Applications
-scripts/make-release.sh 0.2.1 # → build/whoRU-0.2.1-release/: both files and their checksums
+scripts/make-release.sh 0.3.0 # → build/whoRU-0.3.0-release/: both files and their checksums
 ```
 
 The package installs the app into Applications, links `whoru` into `/usr/local/bin`, quits an older copy first and opens the new one when it is done, so the setup assistant appears right away. It refuses to run on anything older than macOS 26.
